@@ -425,3 +425,58 @@ Everything else is optional metadata.
 - `scripts/seed-stations.ts` - Seeds valid stations for testing (on-hand below max to require ordering)
 
 ---
+
+## T8 - Order Review Page
+### Status: Complete
+
+### Implementation Summary
+
+**Refs:** Flow4.1, FR-25..FR-30, Constraints §3 (formula + max warn), Constraints §4 (template)
+
+**Design Decision:** Order data is computed on request, not stored. Keeps data fresh and simplifies implementation.
+
+**API Routes:** `app/api/[...route]/_order.ts`
+- GET `/api/sessions/:sessionId/order` - Compute order from demand snapshot + stations
+
+**React Query Hooks:** `hooks/order/`
+- `useOrder(sessionId)` - Query for computed order data
+
+**UI:** `app/sessions/[id]/order/page.tsx`
+- Warning banner (if any products exceed max)
+- Order items table (Product, Demand, On Hand, Max, Order)
+- Order text card with copy-to-clipboard
+- "Mark Completed" button (disabled, T9 stub)
+
+### Order Calculation (Constraints §3)
+
+| Formula | Description |
+|---------|-------------|
+| `recommendedOrderQty = max(0, demandQty - onHandQty)` | Demand-first formula |
+| `exceedsMax = (onHandQty + recommendedOrderQty) > maxQty` | Warning flag (non-blocking) |
+
+### Order Text Template (Simplified)
+```
+Order Request – Session: {sessionCreatedAtISO}
+Stock location: EB5
+
+{productCode} | Order={recommendedOrderQty}
+```
+- Generated client-side from `orderItems`
+- Only includes products where `recommendedOrderQty > 0`
+- Products sorted by `productCode` ascending
+
+### Coverage Blocking
+- API returns 400 if any demanded product lacks a valid station
+- Must have `status === "valid"`, `onHandQty !== null`, `maxQty !== null`
+
+### Session Status Transition
+- Automatically marks session as `completed` when order page is accessed
+
+### User Flow
+1. User navigates from inventory page to `/sessions/:id/order`
+2. Session auto-completes
+3. Warning banner shows if any products exceed max capacity
+4. Order items table shows all products with computed order quantities (order qty is bold)
+5. User copies order text to clipboard
+
+---

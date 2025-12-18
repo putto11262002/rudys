@@ -10,8 +10,8 @@ export function Providers({ children }: { children: ReactNode }) {
       new QueryClient({
         defaultOptions: {
           queries: {
-            // Avoid refetching immediately on client mount with SSR
             staleTime: 60 * 1000, // 1 minute
+            retry: 2,
           },
         },
       })
