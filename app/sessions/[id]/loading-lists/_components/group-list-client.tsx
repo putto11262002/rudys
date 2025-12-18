@@ -155,6 +155,12 @@ export function GroupListClient({
             streamingResult={
               extractingGroupId === group.id ? partialResult : undefined
             }
+            onRerunExtraction={() => {
+              // Don't allow if already extracting another group
+              if (extractingGroupId !== null) return;
+              setExtractingGroupId(group.id);
+              extract(group.id);
+            }}
           />
         ))}
       </div>

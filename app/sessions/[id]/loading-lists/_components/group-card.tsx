@@ -26,7 +26,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { DeleteGroupButton } from "./delete-group-button";
+import { GroupActionsMenu } from "./group-actions-menu";
 import { cn } from "@/lib/utils";
 import type { GroupWithImages } from "@/hooks/groups";
 import type { LoadingListExtraction } from "@/lib/ai/schemas/loading-list-extraction";
@@ -42,6 +42,8 @@ interface GroupCardProps {
   isExtracting?: boolean;
   /** Partial streaming result during extraction */
   streamingResult?: DeepPartial<LoadingListExtraction>;
+  /** Callback to re-run extraction for this group */
+  onRerunExtraction?: () => void;
 }
 
 function StatusBadge({
@@ -315,6 +317,7 @@ export function GroupCard({
   sessionId,
   isExtracting = false,
   streamingResult,
+  onRerunExtraction,
 }: GroupCardProps) {
   const isExtracted =
     group.status === "extracted" || group.status === "needs_attention";
@@ -355,7 +358,12 @@ export function GroupCard({
           />
         </CardTitle>
         <CardAction>
-          <DeleteGroupButton groupId={group.id} sessionId={sessionId} />
+          <GroupActionsMenu
+            groupId={group.id}
+            sessionId={sessionId}
+            onRerunExtraction={onRerunExtraction ?? (() => {})}
+            isExtracting={isExtracting}
+          />
         </CardAction>
       </CardHeader>
       <CardContent className="space-y-3">
