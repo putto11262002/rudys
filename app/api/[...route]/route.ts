@@ -3,6 +3,7 @@ import { handle } from "hono/vercel";
 import { sessionRoutes } from "./_sessions";
 import { groupRoutes } from "./_groups";
 import { extractionRoutes } from "./_extraction";
+import { demandRoutes } from "./_demand";
 
 const app = new Hono().basePath("/api");
 
@@ -13,7 +14,8 @@ const routes = app
   })
   .route("/sessions", sessionRoutes)
   .route("/", groupRoutes)
-  .route("/", extractionRoutes);
+  .route("/", extractionRoutes)
+  .route("/", demandRoutes);
 
 // Export HTTP method handlers for Next.js App Router
 export const GET = handle(app);

@@ -21,6 +21,7 @@ app/
       _sessions.ts  # Session API routes
       _groups.ts    # Group API routes
       _extraction.ts# Extraction API routes
+      _demand.ts    # Demand API routes (T5)
   providers.tsx     # QueryClientProvider wrapper
 
 hooks/
@@ -37,6 +38,10 @@ hooks/
     use-extraction.ts # useExtractionResult, useExtractGroup
     query-keys.ts     # extractionKeys factory
     index.ts          # Re-exports
+  demand/
+    use-demand.ts   # useDemand, useApproveDemand (T5)
+    query-keys.ts   # demandKeys factory
+    index.ts        # Re-exports
 
 lib/
   api/
@@ -273,5 +278,53 @@ Everything else is optional metadata.
 3. Group card collapsible opens with live partial results (activities, items appear in real-time)
 4. On complete → final status badge (green/yellow/red)
 5. Demand page aggregates all successful extractions
+
+---
+
+## T5 - Demand review + approve (snapshot)
+### Status: Complete
+
+### Implementation Summary
+
+**Refs:** Flow2.4, FR-16..FR-18, FR-14, Constraints §2 (qty=1), NFR-2
+
+**Design Decision:** Irreversible workflow - once demand is approved, loading lists become read-only. No going back.
+
+**Database:** `lib/db/schema.ts`
+- `demandSnapshots` - Table for frozen demand at approval time:
+  - `id`, `sessionId` (FK, unique), `approvedAt`
+  - `items` (jsonb) - Array of `DemandItemJson`
+  - `totalProducts`, `totalQuantity` - Summary stats
+- `DemandItemJson` type: `{ productCode, demandQty, description?, sources[] }`
+
+**API Routes:** `app/api/[...route]/_demand.ts`
+- GET `/api/sessions/:sessionId/demand` - Get demand (computed or snapshot)
+- POST `/api/sessions/:sessionId/demand/approve` - Approve demand
+
+**React Query Hooks:** `hooks/demand/`
+- `useDemand(sessionId)` - Query for demand data
+- `useApproveDemand()` - Mutation for approval
+
+**UI:** `app/sessions/[id]/demand/page.tsx`
+- Summary stats (activities, line items, unique products, extraction cost)
+- Aggregated demand table with collapsible drilldown per product
+- Drilldown shows sources (group label + activity code)
+- Approve button (disabled when empty)
+- Approved state shows badge + "Continue to Inventory" button
+- Back button hidden when approved (irreversible)
+
+### Key Patterns
+- **Computed vs Snapshot:** Before approval, demand is computed from groups. After approval, uses frozen snapshot.
+- **Blocking rules:** Cannot approve empty demand. Cannot approve if already approved.
+- **Status transition:** `capturing_loading_lists` → `capturing_inventory` on approval
+- **Drilldown:** Collapsible per product shows sources (group + activity)
+
+### User Flow
+1. User navigates to demand page from loading lists
+2. Reviews aggregated demand with drilldown for verification
+3. Clicks "Approve Demand" (blocked if empty)
+4. Snapshot saved to DB, session status updated
+5. Redirected to inventory page (T6)
+6. If returning to demand page, shows approved state (read-only)
 
 ---

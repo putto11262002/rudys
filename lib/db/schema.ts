@@ -87,8 +87,9 @@ export type LoadingListImage = typeof loadingListImages.$inferSelect;
 export type NewLoadingListImage = typeof loadingListImages.$inferInsert;
 
 // Relations
-export const sessionsRelations = relations(sessions, ({ many }) => ({
+export const sessionsRelations = relations(sessions, ({ many, one }) => ({
   employeeCaptureGroups: many(employeeCaptureGroups),
+  demandSnapshot: one(demandSnapshots),
 }));
 
 export const employeeCaptureGroupsRelations = relations(
@@ -181,4 +182,48 @@ export const loadingListExtractionResultsRelations = relations(
     }),
   })
 );
+
+// ============================================================================
+// Demand Snapshots (T5)
+// ============================================================================
+
+// JSON type for demand item in snapshot
+export type DemandItemJson = {
+  productCode: string;
+  demandQty: number;
+  description?: string;
+  sources: Array<{
+    groupId: string;
+    employeeLabel: string | null;
+    activityCode: string;
+  }>;
+};
+
+// Demand snapshot - frozen demand at approval time
+export const demandSnapshots = pgTable("demand_snapshots", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  sessionId: uuid("session_id")
+    .notNull()
+    .unique() // One snapshot per session
+    .references(() => sessions.id, { onDelete: "cascade" }),
+  approvedAt: timestamp("approved_at", { withTimezone: true, mode: "string" })
+    .notNull()
+    .defaultNow(),
+  // Snapshot of demand items as JSONB
+  items: jsonb("items").notNull().$type<DemandItemJson[]>(),
+  // Summary stats at approval time
+  totalProducts: integer("total_products").notNull(),
+  totalQuantity: integer("total_quantity").notNull(),
+});
+
+export type DemandSnapshot = typeof demandSnapshots.$inferSelect;
+export type NewDemandSnapshot = typeof demandSnapshots.$inferInsert;
+
+// Demand snapshot relations
+export const demandSnapshotsRelations = relations(demandSnapshots, ({ one }) => ({
+  session: one(sessions, {
+    fields: [demandSnapshots.sessionId],
+    references: [sessions.id],
+  }),
+}));
 
