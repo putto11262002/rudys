@@ -183,6 +183,9 @@ interface NormalizedExtraction {
     totalActivities?: number;
     totalLineItems?: number;
   };
+  // Metadata (only available after extraction completes)
+  model?: string | null;
+  totalCost?: number | null;
 }
 
 function ExtractionDataView({
@@ -229,18 +232,6 @@ function ExtractionDataView({
           )}
         >
           {message}
-        </div>
-      )}
-
-      {/* Streaming summary */}
-      {isStreaming && extraction.summary && (
-        <div className="flex items-center gap-4 text-xs text-muted-foreground">
-          {extraction.summary.totalActivities !== undefined && (
-            <span>Activities: {extraction.summary.totalActivities}</span>
-          )}
-          {extraction.summary.totalLineItems !== undefined && (
-            <span>Items: {extraction.summary.totalLineItems}</span>
-          )}
         </div>
       )}
 
@@ -308,6 +299,18 @@ function ExtractionDataView({
           Waiting for data...
         </div>
       )}
+
+      {/* Extraction metadata footer */}
+      {!isStreaming && (extraction.model || extraction.totalCost !== undefined) && (
+        <div className="flex items-center justify-between pt-3 mt-3 border-t text-xs text-muted-foreground">
+          {extraction.model && (
+            <span className="font-mono">{extraction.model.split("/")[1] ?? extraction.model}</span>
+          )}
+          {extraction.totalCost !== undefined && extraction.totalCost !== null && (
+            <span>${extraction.totalCost.toFixed(4)}</span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -328,6 +331,8 @@ export function GroupCard({
   const lineItemCount = displayResult?.lineItems?.filter((i) => i?.primaryCode)?.length ?? 0;
 
   // Normalize the extraction data for display
+  // Note: model and totalCost only exist on stored results, not streaming
+  const storedResult = group.extractionResult;
   const normalizedExtraction: NormalizedExtraction | null = displayResult
     ? {
         status: displayResult.status,
@@ -340,6 +345,8 @@ export function GroupCard({
           quantity?: number;
         }>,
         summary: displayResult.summary as NormalizedExtraction["summary"],
+        model: storedResult?.model,
+        totalCost: storedResult?.totalCost,
       }
     : null;
 

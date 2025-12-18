@@ -14,6 +14,10 @@ CREATE TABLE "loading_list_extraction_results" (
 	"activities" jsonb NOT NULL,
 	"line_items" jsonb NOT NULL,
 	"summary" jsonb NOT NULL,
+	"model" text,
+	"input_tokens" integer,
+	"output_tokens" integer,
+	"total_cost" real,
 	"extracted_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint

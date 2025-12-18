@@ -16,12 +16,49 @@ import {
 
 export const maxDuration = 60;
 
+// Default model if none specified
+const DEFAULT_MODEL = "openai/gpt-4.1-nano";
+
+// Model pricing (per 1M tokens) - approximate costs
+const MODEL_PRICING: Record<string, { input: number; output: number }> = {
+  "openai/gpt-4.1-nano": { input: 0.10, output: 0.40 },
+  "openai/gpt-5-nano": { input: 0.10, output: 0.40 },
+  "openai/gpt-4o-mini": { input: 0.15, output: 0.60 },
+  "google/gemini-2.5-flash-lite": { input: 0.075, output: 0.30 },
+  "google/gemini-2.0-flash": { input: 0.10, output: 0.40 },
+};
+
+// Valid models that can be selected
+const VALID_MODELS = Object.keys(MODEL_PRICING);
+
 /**
- * Save extraction result to database
+ * Calculate cost based on token usage and model
+ */
+function calculateCost(
+  model: string,
+  inputTokens: number,
+  outputTokens: number
+): number {
+  const pricing = MODEL_PRICING[model] ?? MODEL_PRICING[DEFAULT_MODEL];
+  const inputCost = (inputTokens / 1_000_000) * pricing.input;
+  const outputCost = (outputTokens / 1_000_000) * pricing.output;
+  return inputCost + outputCost;
+}
+
+interface ExtractionMetadata {
+  model: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  totalCost?: number;
+}
+
+/**
+ * Save extraction result to database with metadata
  */
 async function saveExtractionResult(
   groupId: string,
-  extraction: LoadingListExtraction
+  extraction: LoadingListExtraction,
+  metadata: ExtractionMetadata
 ): Promise<void> {
   await db
     .delete(loadingListExtractionResults)
@@ -34,20 +71,12 @@ async function saveExtractionResult(
     activities: extraction.activities,
     lineItems: extraction.lineItems,
     summary: extraction.summary,
+    model: metadata.model,
+    inputTokens: metadata.inputTokens,
+    outputTokens: metadata.outputTokens,
+    totalCost: metadata.totalCost,
   });
 }
-
-// Default model if none specified
-const DEFAULT_MODEL = "openai/gpt-4.1-nano";
-
-// Valid models that can be selected
-const VALID_MODELS = [
-  "openai/gpt-4.1-nano",
-  "openai/gpt-5-nano",
-  "openai/gpt-4o-mini",
-  "google/gemini-2.5-flash-lite",
-  "google/gemini-2.0-flash",
-];
 
 export async function POST(request: Request) {
   const body = await request.json();
@@ -106,7 +135,7 @@ export async function POST(request: Request) {
         { role: "system", content: LOADING_LIST_SYSTEM_PROMPT },
         { role: "user", content },
       ],
-      onFinish: async ({ object }) => {
+      onFinish: async ({ object, usage }) => {
         if (!object) {
           await db
             .update(employeeCaptureGroups)
@@ -115,8 +144,21 @@ export async function POST(request: Request) {
           return;
         }
 
-        // Persist extraction result
-        await saveExtractionResult(groupId, object);
+        // Calculate cost from usage (AI SDK uses inputTokens/outputTokens)
+        const inputTokens = usage?.inputTokens;
+        const outputTokens = usage?.outputTokens;
+        const totalCost =
+          inputTokens !== undefined && outputTokens !== undefined
+            ? calculateCost(selectedModel, inputTokens, outputTokens)
+            : undefined;
+
+        // Persist extraction result with metadata
+        await saveExtractionResult(groupId, object, {
+          model: selectedModel,
+          inputTokens,
+          outputTokens,
+          totalCost,
+        });
 
         // Update group status
         const newStatus = object.status === "error" ? "needs_attention" : "extracted";

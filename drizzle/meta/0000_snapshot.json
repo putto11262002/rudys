@@ -1,5 +1,5 @@
 {
-  "id": "88011a32-80e5-444b-a15d-e75eb2b8a54f",
+  "id": "401d67bf-f4a0-44bb-91c1-57fb12a99f82",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -110,6 +110,30 @@
           "type": "jsonb",
           "primaryKey": false,
           "notNull": true
+        },
+        "model": {
+          "name": "model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "input_tokens": {
+          "name": "input_tokens",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "output_tokens": {
+          "name": "output_tokens",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "total_cost": {
+          "name": "total_cost",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": false
         },
         "extracted_at": {
           "name": "extracted_at",

@@ -65,7 +65,7 @@ export function GroupActionsMenu({
   return (
     <>
       {/* Desktop: separate buttons */}
-      <div className="hidden md:flex items-center gap-1">
+      <div className="hidden sm:flex items-center gap-1">
         <Button
           variant="ghost"
           size="sm"
@@ -86,8 +86,8 @@ export function GroupActionsMenu({
         </Button>
       </div>
 
-      {/* Mobile: dropdown menu */}
-      <div className="md:hidden">
+      {/* Mobile: dropdown menu with icon-only items */}
+      <div className="sm:hidden">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="sm">
@@ -98,16 +98,15 @@ export function GroupActionsMenu({
             <DropdownMenuItem
               onClick={handleRerun}
               disabled={isExtracting}
+              className="justify-center"
             >
-              <RefreshCw className={`size-4 mr-2 ${isExtracting ? "animate-spin" : ""}`} />
-              Re-run extraction
+              <RefreshCw className={`size-4 ${isExtracting ? "animate-spin" : ""}`} />
             </DropdownMenuItem>
             <DropdownMenuItem
               onClick={() => setDeleteDialogOpen(true)}
-              className="text-destructive focus:text-destructive"
+              className="justify-center text-destructive focus:text-destructive"
             >
-              <Trash2 className="size-4 mr-2" />
-              Delete group
+              <Trash2 className="size-4" />
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

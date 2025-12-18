@@ -139,15 +139,12 @@ export function GroupListClient({
     <>
       <div className="space-y-4 pb-24">
         {/* Model selector */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-muted-foreground">Model:</span>
-            <ModelSelector
-              value={selectedModel}
-              onChange={setSelectedModel}
-              disabled={isAnyExtracting}
-            />
-          </div>
+        <div className="flex items-center">
+          <ModelSelector
+            value={selectedModel}
+            onChange={setSelectedModel}
+            disabled={isAnyExtracting}
+          />
         </div>
 
         {/* Capture card at the top when active */}

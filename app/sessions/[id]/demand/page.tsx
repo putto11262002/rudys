@@ -16,8 +16,8 @@ interface DemandPageProps {
 function DemandSkeleton() {
   return (
     <>
-      <div className="grid grid-cols-3 gap-4 mb-6">
-        {[1, 2, 3].map((i) => (
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+        {[1, 2, 3, 4].map((i) => (
           <Card key={i}>
             <CardContent className="pt-6">
               <Skeleton className="h-8 w-16 mb-1" />
@@ -118,6 +118,10 @@ export default function DemandPage({ params }: DemandPageProps) {
     (sum, g) => sum + (g.extractionResult?.summary?.totalLineItems ?? 0),
     0
   );
+  const totalExtractionCost = groups.reduce(
+    (sum, g) => sum + (g.extractionResult?.totalCost ?? 0),
+    0
+  );
 
   if (isLoading) {
     return (
@@ -170,7 +174,7 @@ export default function DemandPage({ params }: DemandPageProps) {
       </div>
 
       {/* Summary Stats */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
         <Card>
           <CardContent className="pt-6">
             <div className="text-2xl font-bold">{totalActivities}</div>
@@ -187,6 +191,12 @@ export default function DemandPage({ params }: DemandPageProps) {
           <CardContent className="pt-6">
             <div className="text-2xl font-bold">{demandItems.length}</div>
             <div className="text-sm text-muted-foreground">Unique Products</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <div className="text-2xl font-bold">${totalExtractionCost.toFixed(4)}</div>
+            <div className="text-sm text-muted-foreground">Extraction Cost</div>
           </CardContent>
         </Card>
       </div>

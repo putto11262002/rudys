@@ -131,6 +131,12 @@ export const loadingListExtractionResults = pgTable(
     lineItems: jsonb("line_items").notNull().$type<LineItemJson[]>(),
     summary: jsonb("summary").notNull().$type<ExtractionSummaryJson>(),
 
+    // Extraction metadata
+    model: text("model"),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    totalCost: real("total_cost"), // USD
+
     extractedAt: timestamp("extracted_at", { withTimezone: true, mode: "string" })
       .notNull()
       .defaultNow(),
