@@ -5,8 +5,49 @@ import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { put, del } from "@vercel/blob";
 import { db } from "@/lib/db";
-import { employeeCaptureGroups, loadingListImages } from "@/lib/db/schema";
+import {
+  employeeCaptureGroups,
+  loadingListImages,
+  loadingListExtractionResults,
+} from "@/lib/db/schema";
 import type { ActionResult } from "./types";
+
+/**
+ * Invalidates extraction result for a group if it exists.
+ * Resets group status to "pending" and deletes extraction result.
+ * Call this when images are added/removed from a group.
+ */
+export async function invalidateGroupExtraction(groupId: string): Promise<void> {
+  // Check if group has extraction result
+  const group = await db.query.employeeCaptureGroups.findFirst({
+    where: eq(employeeCaptureGroups.id, groupId),
+  });
+
+  if (!group || group.status === "pending") {
+    return; // Nothing to invalidate
+  }
+
+  // Delete extraction result
+  await db
+    .delete(loadingListExtractionResults)
+    .where(eq(loadingListExtractionResults.groupId, groupId));
+
+  // Reset AI classification on images
+  await db
+    .update(loadingListImages)
+    .set({
+      aiClassificationIsLoadingList: null,
+      aiClassificationConfidence: null,
+      aiClassificationReason: null,
+    })
+    .where(eq(loadingListImages.groupId, groupId));
+
+  // Reset group status to pending
+  await db
+    .update(employeeCaptureGroups)
+    .set({ status: "pending" })
+    .where(eq(employeeCaptureGroups.id, groupId));
+}
 
 const createGroupSchema = z.object({
   sessionId: z.string().uuid(),
@@ -69,6 +110,9 @@ export async function uploadGroupImage(
   }
 
   try {
+    // Invalidate extraction if group was already extracted
+    await invalidateGroupExtraction(parsed.data.groupId);
+
     const blob = await put(
       `sessions/${sessionId}/loading-lists/${groupId}/${crypto.randomUUID()}.${file.name.split(".").pop()}`,
       file,
@@ -103,6 +147,100 @@ export async function finalizeGroup(
   updateTag(`session:${sessionId}`);
   updateTag(`groups:${sessionId}`);
   return { ok: true, data: null, message: "Group finalized" };
+}
+
+/**
+ * Combined action: create group + upload all images + revalidate
+ * Returns groupId for subsequent extraction call
+ */
+export async function createGroupWithImages(
+  sessionId: string,
+  imageData: { name: string; type: string; base64: string }[]
+): Promise<ActionResult<{ groupId: string }>> {
+  const parsed = createGroupSchema.safeParse({ sessionId });
+  if (!parsed.success) {
+    return { ok: false, error: "Invalid session ID" };
+  }
+
+  if (imageData.length === 0) {
+    return { ok: false, error: "No images provided" };
+  }
+
+  try {
+    // 1. Create the group
+    const existingGroups = await db.query.employeeCaptureGroups.findMany({
+      where: eq(employeeCaptureGroups.sessionId, parsed.data.sessionId),
+    });
+    const groupNumber = existingGroups.length + 1;
+
+    const [group] = await db
+      .insert(employeeCaptureGroups)
+      .values({
+        sessionId: parsed.data.sessionId,
+        employeeLabel: `Employee ${groupNumber}`,
+        status: "pending",
+      })
+      .returning({ id: employeeCaptureGroups.id });
+
+    const groupId = group.id;
+
+    // 2. Upload all images in parallel
+    const uploadResults = await Promise.all(
+      imageData.map(async (img, index) => {
+        try {
+          // Convert base64 to buffer
+          const buffer = Buffer.from(img.base64, "base64");
+          const ext = img.name.split(".").pop() || "jpg";
+
+          const blob = await put(
+            `sessions/${sessionId}/loading-lists/${groupId}/${crypto.randomUUID()}.${ext}`,
+            buffer,
+            { access: "public", contentType: img.type }
+          );
+
+          await db.insert(loadingListImages).values({
+            groupId,
+            blobUrl: blob.url,
+            captureType: "uploaded_file",
+            orderIndex: index,
+            width: 0,
+            height: 0,
+            uploadValidationPassed: true,
+          });
+
+          return { ok: true };
+        } catch (error) {
+          console.error(`Failed to upload image ${index}:`, error);
+          return { ok: false };
+        }
+      })
+    );
+
+    const failCount = uploadResults.filter((r) => !r.ok).length;
+    if (failCount === imageData.length) {
+      // All uploads failed - delete the group
+      await db
+        .delete(employeeCaptureGroups)
+        .where(eq(employeeCaptureGroups.id, groupId));
+      return { ok: false, error: "All image uploads failed" };
+    }
+
+    // 3. Revalidate cache so new group appears in list
+    updateTag(`session:${sessionId}`);
+    updateTag(`groups:${sessionId}`);
+
+    return {
+      ok: true,
+      data: { groupId },
+      message:
+        failCount > 0
+          ? `Group created with ${imageData.length - failCount}/${imageData.length} images`
+          : "Group created",
+    };
+  } catch (error) {
+    console.error("Failed to create group with images:", error);
+    return { ok: false, error: "Failed to create group" };
+  }
 }
 
 const deleteGroupSchema = z.object({

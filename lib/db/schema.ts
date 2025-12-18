@@ -6,6 +6,7 @@ import {
   integer,
   boolean,
   real,
+  jsonb,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 
@@ -98,6 +99,7 @@ export const employeeCaptureGroupsRelations = relations(
       references: [sessions.id],
     }),
     images: many(loadingListImages),
+    extractionResult: one(loadingListExtractionResults),
   })
 );
 
@@ -110,3 +112,111 @@ export const loadingListImagesRelations = relations(
     }),
   })
 );
+
+// Loading list extraction results (AI output per group)
+export const loadingListExtractionResults = pgTable(
+  "loading_list_extraction_results",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    groupId: uuid("group_id")
+      .notNull()
+      .references(() => employeeCaptureGroups.id, { onDelete: "cascade" }),
+
+    // Raw extraction output (JSON) - matches LoadingListExtractionSchema
+    imageChecks: jsonb("image_checks").notNull().$type<ImageCheckJson[]>(),
+    activities: jsonb("activities").notNull().$type<ActivityJson[]>(),
+    lineItems: jsonb("line_items").notNull().$type<LineItemJson[]>(),
+    ignoredImages: jsonb("ignored_images")
+      .notNull()
+      .$type<IgnoredImageJson[]>(),
+    warnings: jsonb("warnings").notNull().$type<WarningJson[]>(),
+    summary: jsonb("summary").notNull().$type<ExtractionSummaryJson>(),
+
+    extractedAt: timestamp("extracted_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  }
+);
+
+// JSON types for extraction results (matches Zod schema output)
+export type ImageCheckJson = {
+  imageIndex: number;
+  isLoadingList: boolean;
+  loadingListConfidence: number;
+  notLoadingListReason?: string;
+  isContinuationOfPrevious?: boolean;
+  continuationConfidence?: number;
+  sequenceNote?: "ok" | "overlap" | "gap" | "uncertain";
+};
+
+export type ActivityJson = {
+  activityCode: string;
+  room?: string;
+  endUser?: string;
+  notes?: string;
+  confidence: number;
+  evidence: {
+    firstSeenImageIndex: number;
+  };
+};
+
+export type LineItemJson = {
+  lineItemId: string;
+  activityCode: string;
+  codes: string[];
+  primaryCode: string;
+  primaryCodeConfidence: number;
+  description?: string;
+  internalCode?: string;
+  quantity: number;
+  isPartial: boolean;
+  reconciled: boolean;
+  confidence: number;
+  evidence: {
+    imageIndex: number;
+  };
+};
+
+export type IgnoredImageJson = {
+  imageIndex: number;
+  reason: string;
+};
+
+export type WarningJson = {
+  code:
+    | "NOT_LOADING_LIST"
+    | "LOW_CONFIDENCE"
+    | "PARTIAL_ITEM_IGNORED"
+    | "PARTIAL_NOT_RECONCILED"
+    | "POSSIBLE_DUPLICATE"
+    | "SEQUENCE_GAP_OR_REORDER"
+    | "UNREADABLE";
+  severity: "info" | "warn" | "block";
+  message: string;
+  imageIndex?: number;
+  lineItemId?: string;
+};
+
+export type ExtractionSummaryJson = {
+  totalLoadingListImages: number;
+  totalActivities: number;
+  totalLineItemsCounted: number;
+  totalLineItemsIgnored: number;
+};
+
+export type LoadingListExtractionResult =
+  typeof loadingListExtractionResults.$inferSelect;
+export type NewLoadingListExtractionResult =
+  typeof loadingListExtractionResults.$inferInsert;
+
+// Extraction results relations
+export const loadingListExtractionResultsRelations = relations(
+  loadingListExtractionResults,
+  ({ one }) => ({
+    group: one(employeeCaptureGroups, {
+      fields: [loadingListExtractionResults.groupId],
+      references: [employeeCaptureGroups.id],
+    }),
+  })
+);
+

@@ -5,7 +5,12 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { del } from "@vercel/blob";
 import { db } from "@/lib/db";
-import { sessions, employeeCaptureGroups, loadingListImages } from "@/lib/db/schema";
+import {
+  sessions,
+  employeeCaptureGroups,
+  loadingListImages,
+  sessionState,
+} from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import type { ActionResult } from "./types";
 
@@ -90,5 +95,39 @@ export async function deleteSession(
       ok: false,
       error: "Failed to delete session",
     };
+  }
+}
+
+const updateSessionStatusSchema = z.object({
+  sessionId: z.string().uuid(),
+  status: z.enum(sessionState),
+});
+
+export async function updateSessionStatus(
+  sessionId: string,
+  status: (typeof sessionState)[number]
+): Promise<ActionResult<null>> {
+  const parsed = updateSessionStatusSchema.safeParse({ sessionId, status });
+  if (!parsed.success) {
+    return { ok: false, error: "Invalid parameters" };
+  }
+
+  try {
+    const [updated] = await db
+      .update(sessions)
+      .set({ status: parsed.data.status })
+      .where(eq(sessions.id, parsed.data.sessionId))
+      .returning({ id: sessions.id });
+
+    if (!updated) {
+      return { ok: false, error: "Session not found" };
+    }
+
+    updateTag("sessions");
+    updateTag(`session:${parsed.data.sessionId}`);
+
+    return { ok: true, data: null, message: "Session status updated" };
+  } catch {
+    return { ok: false, error: "Failed to update session status" };
   }
 }

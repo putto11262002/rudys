@@ -11,11 +11,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import {
-  createEmployeeGroup,
-  uploadGroupImage,
-  finalizeGroup,
-} from "@/lib/actions/groups";
+import { createGroupWithImages } from "@/lib/actions/groups";
+import { extractGroup } from "@/lib/actions/extraction";
 
 // Constraints
 const ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "image/webp"];
@@ -38,18 +35,39 @@ function validateFile(file: File): string | null {
   return null;
 }
 
+async function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      // Remove the data:image/...;base64, prefix
+      const base64 = result.split(",")[1];
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+type CaptureStatus = "idle" | "uploading" | "extracting";
+
 interface CaptureCardProps {
   sessionId: string;
   onCancel: () => void;
+  /** Called when upload+extract starts, provides groupId for tracking */
+  onStarted: (groupId: string) => void;
+  /** Called when everything completes (success or failure) */
   onComplete: () => void;
 }
 
 export function CaptureCard({
   sessionId,
   onCancel,
+  onStarted,
   onComplete,
 }: CaptureCardProps) {
   const [images, setImages] = useState<LocalImage[]>([]);
+  const [status, setStatus] = useState<CaptureStatus>("idle");
   const [isPending, startTransition] = useTransition();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -86,49 +104,57 @@ export function CaptureCard({
     });
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (images.length === 0) {
       toast.error("Add at least one image");
       return;
     }
 
-    startTransition(async () => {
-      // 1. Create the group
-      const groupResult = await createEmployeeGroup(sessionId);
-      if (!groupResult.ok) {
-        toast.error(groupResult.error);
-        return;
-      }
+    setStatus("uploading");
 
-      const { groupId } = groupResult.data;
+    // Convert images to base64 for server action
+    const imageData = await Promise.all(
+      images.map(async (img) => ({
+        name: img.file.name,
+        type: img.file.type,
+        base64: await fileToBase64(img.file),
+      })),
+    );
 
-      // 2. Upload each image in parallel (separate server action calls)
-      const uploadResults = await Promise.all(
-        images.map(async (img, index) => {
-          const formData = new FormData();
-          formData.append("image", img.file);
-          return uploadGroupImage(groupId, sessionId, index, formData);
-        })
-      );
+    // Cleanup previews
+    images.forEach((img) => URL.revokeObjectURL(img.preview));
 
-      const successCount = uploadResults.filter((r) => r.ok).length;
-      const failCount = uploadResults.length - successCount;
+    // 1. Create group + upload images (revalidates cache)
+    const uploadResult = await createGroupWithImages(sessionId, imageData);
 
-      // 3. Finalize (revalidate cache)
-      await finalizeGroup(sessionId);
+    if (!uploadResult.ok) {
+      toast.error(uploadResult.error);
+      setStatus("idle");
+      return;
+    }
 
-      // Cleanup previews
-      images.forEach((img) => URL.revokeObjectURL(img.preview));
+    const { groupId } = uploadResult.data;
 
-      if (failCount > 0) {
-        toast.warning(`${successCount} uploaded, ${failCount} failed`);
-      } else {
-        toast.success(`${successCount} image${successCount !== 1 ? "s" : ""} uploaded`);
-      }
+    // Notify parent that we've started (group now visible in list)
+    onStarted(groupId);
 
-      onComplete();
-    });
+    // 2. Start extraction (revalidates cache when done)
+    setStatus("extracting");
+    const extractResult = await extractGroup(sessionId, groupId);
+
+    if (extractResult.ok) {
+      toast.success("Extraction completed");
+    } else {
+      toast.error("Extraction failed", {
+        description: extractResult.error,
+      });
+    }
+
+    setStatus("idle");
+    onComplete();
   };
+
+  const isProcessing = status !== "idle" || isPending;
 
   return (
     <Card>
@@ -155,7 +181,8 @@ export function CaptureCard({
                 <button
                   type="button"
                   onClick={() => removeImage(img.id)}
-                  className="absolute top-1 right-1 p-1 rounded-full bg-background/80 opacity-0 group-hover:opacity-100 transition-opacity"
+                  disabled={isProcessing}
+                  className="absolute top-1 right-1 p-1 rounded-full bg-background/80 opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-50"
                 >
                   <X className="size-3" />
                 </button>
@@ -182,12 +209,12 @@ export function CaptureCard({
             capture="environment"
             onChange={(e) => addFiles(e.target.files)}
             className="hidden"
-            disabled={isPending}
+            disabled={isProcessing}
           />
           <Button
             variant="outline"
             onClick={() => cameraInputRef.current?.click()}
-            disabled={isPending}
+            disabled={isProcessing}
           >
             <Camera className="size-4 mr-2" />
             Camera
@@ -200,12 +227,12 @@ export function CaptureCard({
             multiple
             onChange={(e) => addFiles(e.target.files)}
             className="hidden"
-            disabled={isPending}
+            disabled={isProcessing}
           />
           <Button
             variant="outline"
             onClick={() => fileInputRef.current?.click()}
-            disabled={isPending}
+            disabled={isProcessing}
           >
             <Upload className="size-4 mr-2" />
             Upload
@@ -213,21 +240,26 @@ export function CaptureCard({
         </div>
       </CardContent>
       <CardFooter className="flex justify-between">
-        <Button variant="ghost" onClick={onCancel} disabled={isPending}>
+        <Button variant="ghost" onClick={onCancel} disabled={isProcessing}>
           Cancel
         </Button>
         <Button
           onClick={handleSubmit}
-          disabled={isPending || images.length === 0}
+          disabled={isProcessing || images.length === 0}
         >
-          {isPending ? (
+          {status === "uploading" && (
             <>
               <Loader2 className="size-4 mr-2 animate-spin" />
               Uploading...
             </>
-          ) : (
-            "Confirm"
           )}
+          {status === "extracting" && (
+            <>
+              <Loader2 className="size-4 mr-2 animate-spin" />
+              Extracting...
+            </>
+          )}
+          {status === "idle" && !isPending && "Confirm & Extract"}
         </Button>
       </CardFooter>
     </Card>

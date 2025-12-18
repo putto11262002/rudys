@@ -123,3 +123,110 @@
 5. User can delete groups → confirmation dialog → deletes group + all blobs
 
 ---
+
+## T4 - Loading-list extraction Server Action + persistence
+### Status: Complete
+
+### Implementation Summary
+
+**Refs:** Flow2.1–2.3, FR-11..FR-15, Constraints §2
+
+**Dependencies added:**
+- `ai@5.0.115` - Vercel AI SDK core
+- `@ai-sdk/react@2.0.117` - AI SDK React hooks (useObject)
+
+### Environment Variables
+- `AI_GATEWAY_API_KEY` - Required for Vercel AI Gateway
+
+**Database:** `lib/db/schema.ts`
+- `loadingListExtractionResults` - Table storing AI extraction output per group
+  - `id`, `groupId` (FK), `extractedAt`
+  - `imageChecks` (jsonb) - Per-image loading list classification
+  - `activities` (jsonb) - Extracted ACT.* codes
+  - `lineItems` (jsonb) - Extracted product codes and quantities
+  - `ignoredImages` (jsonb) - Images marked as non-loading-list
+  - `warnings` (jsonb) - Extraction warnings
+  - `summary` (jsonb) - Counts rollup
+- JSON types for type-safe jsonb fields
+
+**Zod Schemas:** `lib/ai/schemas/loading-list-extraction.ts`
+- `WarningSchema` - Extraction warnings with severity levels
+- `ImageCheckSchema` - Per-image classification result
+- `ActivitySchema` - ACT.* activity with metadata
+- `LineItemSchema` - Product line item with partial reconciliation
+- `LoadingListExtractionSchema` - Full extraction output schema
+
+**AI Prompts:** `lib/ai/prompts.ts`
+- `LOADING_LIST_SYSTEM_PROMPT` - Dutch "Laadlijst" extraction rules
+- `LOADING_LIST_USER_PROMPT` - Per-group user prompt template
+
+**AI Core:** `lib/ai/extract-loading-list.ts`
+- `extractLoadingList(imageUrls)` - Calls GPT-4o-mini via Vercel AI Gateway
+- `safeExtractLoadingList(imageUrls)` - Safe wrapper with error handling
+- Uses Vercel AI Gateway with model string `"openai/gpt-4o-mini"`
+
+**Route Handler:** `app/api/extract/loading-list/route.ts`
+- POST handler for streaming extraction
+- Uses `streamObject` for real-time streaming to `useObject` hook
+- `onFinish` callback saves extraction result to database
+- 60s timeout for multi-image extraction
+
+**Server Actions:** `lib/actions/extraction.ts`
+- `runLoadingListExtraction(sessionId, groupIds?)` - Main extraction action
+  - Validates session exists
+  - Processes groups sequentially
+  - Persists extraction results to DB
+  - Updates image AI classification fields
+  - Updates group status (`extracted` | `needs_attention`)
+  - Updates session status to `review_demand`
+  - Returns summary with per-group results
+- `getGroupExtractionResult(groupId)` - Retrieves extraction result
+
+**Data Loaders:** `lib/data/extraction.ts`
+- `getGroupsWithExtractionResults(sessionId)` - Groups with extraction data
+- `getExtractionResult(groupId)` - Single extraction result
+
+**UI Components:**
+
+`app/sessions/[id]/loading-lists/_components/group-list-client.tsx`
+- Uses `useObject` hook from `@ai-sdk/react` for streaming extraction
+- "Continue to Review" button triggers extraction for all groups sequentially
+- Shows progress "Extracting 1/N..." with spinner
+- `onFinish` callback chains to next group or navigates to demand page
+- Toast notifications for success/failure
+
+`app/sessions/[id]/loading-lists/_components/group-card.tsx`
+- StatusBadge component shows extraction status
+- Pending (clock icon) / Extracted (green check) / Needs Attention (amber alert)
+
+`app/sessions/[id]/demand/page.tsx`
+- Demand review page showing extraction results
+- Aggregates line items by primaryCode
+- Summary stats (activities, line items, unique products)
+- Warning for ignored partial items
+- Placeholder for T5 approval flow
+
+### Key Patterns
+- **Streaming extraction with useObject** - Real-time updates via `streamObject` + `useObject` hook
+- **Vercel AI Gateway** - Uses `AI_GATEWAY_API_KEY` with model string `"openai/gpt-4o-mini"`
+- **Per-group isolation** - Extraction failures don't block other groups
+- **Blocking warnings** - Groups with severity="block" warnings marked `needs_attention`
+- **Partial item handling** - Items with `isPartial=true && reconciled=false` excluded from demand aggregation
+- **Image classification update** - Individual images updated with AI classification results
+- **Session status transition** - Moves to `review_demand` after extraction
+
+### User Flow
+1. User adds loading list images via capture
+2. User clicks "Continue to Review" → triggers extraction
+3. Extraction runs for all groups with images
+4. Toast shows success/failure count
+5. Navigates to demand review page
+6. Demand page shows aggregated product quantities
+
+### Error Handling
+- Network errors caught and reported via toast
+- Failed groups marked `needs_attention`
+- Summary includes success/fail counts
+- Individual group errors logged to console
+
+---
