@@ -15,7 +15,10 @@ import {
 } from "@/components/ui/empty";
 import { Card, CardContent } from "@/components/ui/card";
 import { GroupCard } from "./group-card";
-import { ModelSelector, DEFAULT_MODEL_ID } from "./model-selector";
+import {
+  ModelSelector,
+  DEFAULT_MODEL_ID,
+} from "@/components/ai/model-selector";
 import { useUpdateSessionStatus } from "@/hooks/sessions";
 import { useGroups, type GroupWithImages } from "@/hooks/groups";
 import { useStreamingExtraction } from "@/hooks/extraction";

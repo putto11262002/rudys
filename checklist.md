@@ -21,7 +21,6 @@ app/
       _sessions.ts  # Session API routes
       _groups.ts    # Group API routes
       _extraction.ts# Extraction API routes
-      _demand.ts    # Demand API routes (T5)
   providers.tsx     # QueryClientProvider wrapper
 
 hooks/
@@ -38,10 +37,6 @@ hooks/
     use-extraction.ts # useExtractionResult, useExtractGroup
     query-keys.ts     # extractionKeys factory
     index.ts          # Re-exports
-  demand/
-    use-demand.ts   # useDemand, useApproveDemand (T5)
-    query-keys.ts   # demandKeys factory
-    index.ts        # Re-exports
 
 lib/
   api/
@@ -326,5 +321,107 @@ Everything else is optional metadata.
 4. Snapshot saved to DB, session status updated
 5. Redirected to inventory page (T6)
 6. If returning to demand page, shows approved state (read-only)
+
+---
+
+## T6 & T7 - Station capture + extraction
+### Status: Complete
+
+### Implementation Summary
+
+**Refs:** Flow3.1–3.3, FR-19..FR-24, Constraints §1, §2, §3, §5
+
+**Database:** `lib/db/schema.ts`
+- `stationCaptures` - Table for station sign+stock image pairs:
+  - `id`, `sessionId` (FK), `status` (pending|valid|needs_attention|failed)
+  - Sign image: `signBlobUrl`, `signWidth`, `signHeight`, `signUploadedAt`
+  - Stock image: `stockBlobUrl`, `stockWidth`, `stockHeight`, `stockUploadedAt`
+  - Extraction: `productCode`, `minQty`, `maxQty`, `onHandQty`
+  - `errorMessage` - Error/warning message from extraction
+  - `extractedAt`, `createdAt`
+
+**Shared Utilities:** `lib/utils/image.ts`
+- `validateImageFile(file)` - MIME type + size validation
+- `fileToBase64(file)` - Convert File to base64
+- `getImageDimensions(file)` - Get width/height
+
+**AI Extraction:** `lib/ai/`
+- `schemas/station-extraction.ts` - Simplified Zod schema:
+  - `status` (success|warning|error)
+  - `message` (explains warning/error)
+  - `productCode`, `minQty`, `maxQty` (from sign)
+  - `onHandQty` (from stock)
+- `extract-station.ts` - `extractStation()`, `safeExtractStation()`
+- `prompts.ts` - `STATION_SYSTEM_PROMPT`, `STATION_USER_PROMPT`
+
+**API Routes:** `app/api/[...route]/_stations.ts`
+- GET `/api/sessions/:sessionId/stations` - List stations
+- POST `/api/sessions/:sessionId/stations` - Create station with sign+stock images
+- DELETE `/api/stations/:id` - Delete station + cleanup blobs
+- POST `/api/stations/:id/extract` - Run AI extraction (accepts modelId)
+- GET `/api/sessions/:sessionId/coverage` - Get coverage status
+
+**React Query Hooks:** `hooks/stations/`
+- `useStations(sessionId)` - List stations query
+- `useCoverage(sessionId)` - Get coverage status
+- `useCreateStation()` - Create station mutation
+- `useDeleteStation()` - Delete mutation
+- `useExtractStation()` - Run extraction mutation
+
+**UI Components:** `app/sessions/[id]/inventory/`
+- `page.tsx` - Main inventory page with capture form, coverage summary, station list
+- `_components/station-capture-card.tsx` - Two stacked capture boxes (sign + stock) with Take Photo / Upload split buttons
+- `_components/station-card.tsx` - Display station with extracted data, status badges, error/warning alerts
+- `_components/coverage-summary.tsx` - Show coverage status for demanded products
+
+**Shared Components:**
+- `components/ai/model-selector.tsx` - Model selector dropdown (shared with loading list extraction)
+- `components/ui/badge.tsx` - Added semantic variants: `success`, `warning`, `error`, `info`
+
+### Simplified Extraction Schema
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | success/warning/error | Overall result |
+| `message` | string? | Explains warning/error |
+| `productCode` | string? | From sign (null if invalid) |
+| `minQty` | number? | From sign (null if invalid) |
+| `maxQty` | number? | From sign (null if invalid) |
+| `onHandQty` | number? | From stock (null if invalid) |
+
+### Status Model
+
+| Status | Condition | Message |
+|--------|-----------|---------|
+| **success** | Both images valid, all data extracted, stock matches sign | Optional |
+| **warning** | Extracted but uncertain (count unclear, unsure if match) | Required |
+| **error** | Invalid sign/stock image, or stock shows wrong product | Required |
+
+### Station Status Mapping
+
+| Extraction Status | Station Status |
+|-------------------|----------------|
+| success | valid |
+| warning | needs_attention |
+| error | failed |
+
+### Coverage Blocking Rule (Constraints §3)
+- For every demanded product, must have a station with:
+  - `status === "valid"`
+  - `onHandQty !== null`
+  - `maxQty !== null`
+
+### User Flow
+1. User navigates from demand page to `/sessions/:id/inventory`
+2. Coverage summary shows which demanded products need stations
+3. User captures sign photo, then stock photo (via camera or upload)
+4. User clicks "Upload Station" → creates station → extraction runs async
+5. Form clears immediately, ready for next station
+6. Station card shows extracted data + status badge
+7. If warning/failed → user can re-extract or delete and retry
+8. Once all demanded products have valid stations → "Continue to Order" enabled
+
+### Scripts
+- `scripts/seed-stations.ts` - Seeds valid stations for testing (on-hand below max to require ordering)
 
 ---

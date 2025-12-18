@@ -4,6 +4,7 @@ import { sessionRoutes } from "./_sessions";
 import { groupRoutes } from "./_groups";
 import { extractionRoutes } from "./_extraction";
 import { demandRoutes } from "./_demand";
+import { stationRoutes } from "./_stations";
 
 const app = new Hono().basePath("/api");
 
@@ -15,7 +16,8 @@ const routes = app
   .route("/sessions", sessionRoutes)
   .route("/", groupRoutes)
   .route("/", extractionRoutes)
-  .route("/", demandRoutes);
+  .route("/", demandRoutes)
+  .route("/", stationRoutes);
 
 // Export HTTP method handlers for Next.js App Router
 export const GET = handle(app);

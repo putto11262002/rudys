@@ -162,7 +162,7 @@ export default function DemandPage({ params }: DemandPageProps) {
         <div className="flex items-center gap-3">
           <h1 className="text-2xl font-bold tracking-tight">Demand Review</h1>
           {isApproved && (
-            <Badge variant="secondary" className="bg-green-100 text-green-800">
+            <Badge variant="success">
               <CheckCircle2 className="size-3 mr-1" />
               Approved
             </Badge>

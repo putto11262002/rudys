@@ -8,37 +8,46 @@ Given a task #$1 implement this task across all vertical slices.
 Implementation notes: #$2
 
 Rules:
-- Data rendering
-    - use drizzle query api to fetch and render data on the server
-    - Use Suspense to render skeleton loading states that reflect the actual ui
-    - Empty state must be communicated to the user via shadcn Empty component
-    - Wrap data loader with nextjs unstable_cache and assign appropriate cache tags
-- Mutations: 
-    - Use server actions to mutation data
-    - Use zod to validate mutation input
-    - Mutation result must be  communicated to the user via
-        - Toasts  - short messages
+- Data fetching
+    - Use React Query hooks for data fetching (useQuery)
+    - Query key factories for consistent cache keys (e.g., sessionKeys.lists())
+    - Loading states via React Query's isPending/isLoading
+    - Use Skeleton components that reflect the actual UI structure
+    - Empty state must be communicated via shadcn Empty component
+- Mutations
+    - Use React Query mutations (useMutation) calling Hono RPC client
+    - Use zod to validate input in Hono routes (@hono/zod-validator)
+    - Hooks handle ONLY cache invalidation - NO UI concerns (toasts, navigation)
+    - UI side effects (toasts, navigation) handled in components via mutate(..., { onSuccess })
+    - Mutation result communicated via:
+        - Toasts (sonner) - short messages
         - Alerts - long messages
-    - Server action must return standardize response: {ok: true, data: ..., message: ...}  | {ok: false, error}
-    - If mutation modifies data, you must revalidate appropriate cache tags. updateTag is read own write and revalidateTag is next request will be revalidated.
-    - You must revalidate appropriate 
-    - Mutation loading state must be communicated to the user via
-        - Loader icon
-    - Client-side forms
-        - Use Shadcn Form components
-        - Use appropriate shadcn form components for each field
-        - Use react-hook-form with zod schema
-        - Validate form input on the client
+    - Mutation loading state communicated via:
+        - isPending from useMutation
+        - Loader icon on buttons
+- API Routes (Hono)
+    - Routes in app/api/[...route]/_<feature>.ts
+    - Routes MUST be chained (.get().post().delete()) for type inference
+    - Export type from chained result for RPC client
+    - Route aggregation: app.route('/path', subRoutes)
+    - Return JSON with error field on failure
+- Client-side forms
+    - Use Shadcn Form components
+    - Use react-hook-form with zod schema
+    - Validate form input on the client
 - UI
-  - Use shadcn components
-  - Use tailwind css with shadcn classes and shadcn defined variables
-  - NEVER create components if it is not truely reusable
+    - All components are client components
+    - Use shadcn components
+    - Use tailwind css with shadcn classes and variables
+    - NEVER create components if not truly reusable
+- Streaming (AI extraction)
+    - Use separate Next.js route handler for streaming (/api/extract-stream)
+    - Use @ai-sdk/react useObject for streaming UI
 - Package management
     - Use bun
     - bun add <package>
     - bun remove <package>
-    - bun upgrade
-    - bunx bunx --bun shadcn@latest ...
+    - bunx --bun shadcn@latest ...
 
 Important files:
 ./tasks.md - contains the list of tasks and the order in which they should be implemented

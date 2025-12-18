@@ -1,0 +1,350 @@
+import { Hono } from "hono";
+import { zValidator } from "@hono/zod-validator";
+import { z } from "zod";
+import { db } from "@/lib/db";
+import { stationCaptures, sessions } from "@/lib/db/schema";
+import { eq, desc } from "drizzle-orm";
+import { put, del } from "@vercel/blob";
+import { safeExtractStation } from "@/lib/ai/extract-station";
+import type { StationExtraction } from "@/lib/ai/schemas/station-extraction";
+
+/**
+ * Maps extraction status to station capture status
+ */
+function mapExtractionStatusToStationStatus(
+  extraction: StationExtraction
+): "valid" | "needs_attention" | "failed" {
+  if (extraction.status === "success") {
+    return "valid";
+  }
+  if (extraction.status === "error") {
+    return "failed";
+  }
+  return "needs_attention"; // warning
+}
+
+// Define routes with CHAINING (critical for type inference)
+export const stationRoutes = new Hono()
+  // List stations for a session
+  .get(
+    "/sessions/:sessionId/stations",
+    zValidator("param", z.object({ sessionId: z.string().uuid() })),
+    async (c) => {
+      const { sessionId } = c.req.valid("param");
+
+      try {
+        const stations = await db.query.stationCaptures.findMany({
+          where: eq(stationCaptures.sessionId, sessionId),
+          orderBy: [desc(stationCaptures.createdAt)],
+        });
+
+        return c.json({ stations });
+      } catch (error) {
+        console.error("Failed to fetch stations:", error);
+        return c.json({ error: "Failed to fetch stations" }, 500);
+      }
+    },
+  )
+  // Create station with sign and stock images
+  .post(
+    "/sessions/:sessionId/stations",
+    zValidator("param", z.object({ sessionId: z.string().uuid() })),
+    zValidator(
+      "json",
+      z.object({
+        signImage: z.object({
+          name: z.string(),
+          type: z.string(),
+          base64: z.string(),
+          width: z.number(),
+          height: z.number(),
+        }),
+        stockImage: z.object({
+          name: z.string(),
+          type: z.string(),
+          base64: z.string(),
+          width: z.number(),
+          height: z.number(),
+        }),
+      }),
+    ),
+    async (c) => {
+      const { sessionId } = c.req.valid("param");
+      const { signImage, stockImage } = c.req.valid("json");
+
+      try {
+        // Verify session exists
+        const session = await db.query.sessions.findFirst({
+          where: eq(sessions.id, sessionId),
+        });
+
+        if (!session) {
+          return c.json({ error: "Session not found" }, 404);
+        }
+
+        // Create station record first to get ID
+        const [station] = await db
+          .insert(stationCaptures)
+          .values({
+            sessionId,
+            status: "pending",
+          })
+          .returning({ id: stationCaptures.id });
+
+        const stationId = station.id;
+
+        try {
+          // Upload sign image
+          const signBuffer = Buffer.from(signImage.base64, "base64");
+          const signExt = signImage.name.split(".").pop() || "jpg";
+          const signBlob = await put(
+            `sessions/${sessionId}/stations/${stationId}/sign.${signExt}`,
+            signBuffer,
+            { access: "public", contentType: signImage.type },
+          );
+
+          // Upload stock image
+          const stockBuffer = Buffer.from(stockImage.base64, "base64");
+          const stockExt = stockImage.name.split(".").pop() || "jpg";
+          const stockBlob = await put(
+            `sessions/${sessionId}/stations/${stationId}/stock.${stockExt}`,
+            stockBuffer,
+            { access: "public", contentType: stockImage.type },
+          );
+
+          // Update station with image URLs
+          const now = new Date().toISOString();
+          await db
+            .update(stationCaptures)
+            .set({
+              signBlobUrl: signBlob.url,
+              signWidth: signImage.width,
+              signHeight: signImage.height,
+              signUploadedAt: now,
+              stockBlobUrl: stockBlob.url,
+              stockWidth: stockImage.width,
+              stockHeight: stockImage.height,
+              stockUploadedAt: now,
+            })
+            .where(eq(stationCaptures.id, stationId));
+
+          // Fetch the created station
+          const createdStation = await db.query.stationCaptures.findFirst({
+            where: eq(stationCaptures.id, stationId),
+          });
+
+          return c.json({ station: createdStation }, 201);
+        } catch (uploadError) {
+          // Cleanup: delete the station record if upload failed
+          await db
+            .delete(stationCaptures)
+            .where(eq(stationCaptures.id, stationId));
+          throw uploadError;
+        }
+      } catch (error) {
+        console.error("Failed to create station:", error);
+        return c.json({ error: "Failed to create station" }, 500);
+      }
+    },
+  )
+  // Delete station
+  .delete(
+    "/stations/:id",
+    zValidator("param", z.object({ id: z.string().uuid() })),
+    async (c) => {
+      const { id } = c.req.valid("param");
+
+      try {
+        const station = await db.query.stationCaptures.findFirst({
+          where: eq(stationCaptures.id, id),
+        });
+
+        if (!station) {
+          return c.json({ error: "Station not found" }, 404);
+        }
+
+        // Delete blobs (best-effort)
+        const blobsToDelete = [
+          station.signBlobUrl,
+          station.stockBlobUrl,
+        ].filter(Boolean) as string[];
+
+        await Promise.all(
+          blobsToDelete.map(async (url) => {
+            try {
+              await del(url);
+            } catch {
+              console.error(`Failed to delete blob: ${url}`);
+            }
+          }),
+        );
+
+        // Delete station record
+        await db.delete(stationCaptures).where(eq(stationCaptures.id, id));
+
+        return c.json({ success: true });
+      } catch (error) {
+        console.error("Failed to delete station:", error);
+        return c.json({ error: "Failed to delete station" }, 500);
+      }
+    },
+  )
+  // Run extraction on station
+  .post(
+    "/stations/:id/extract",
+    zValidator("param", z.object({ id: z.string().uuid() })),
+    zValidator("json", z.object({ modelId: z.string().optional() })),
+    async (c) => {
+      const { id } = c.req.valid("param");
+      const { modelId } = c.req.valid("json");
+
+      try {
+        const station = await db.query.stationCaptures.findFirst({
+          where: eq(stationCaptures.id, id),
+        });
+
+        if (!station) {
+          return c.json({ error: "Station not found" }, 404);
+        }
+
+        if (!station.signBlobUrl || !station.stockBlobUrl) {
+          return c.json(
+            { error: "Station must have both sign and stock images" },
+            400,
+          );
+        }
+
+        // Run AI extraction
+        const extractionResult = await safeExtractStation(
+          station.signBlobUrl,
+          station.stockBlobUrl,
+          modelId,
+        );
+
+        if (!extractionResult.success) {
+          await db
+            .update(stationCaptures)
+            .set({ status: "needs_attention" })
+            .where(eq(stationCaptures.id, id));
+
+          return c.json({ error: extractionResult.error }, 500);
+        }
+
+        const extraction = extractionResult.data;
+
+        // Map extraction status to station status
+        const newStatus = mapExtractionStatusToStationStatus(extraction);
+
+        // Update station with extraction results
+        await db
+          .update(stationCaptures)
+          .set({
+            status: newStatus,
+            productCode: extraction.productCode,
+            minQty: extraction.minQty,
+            maxQty: extraction.maxQty,
+            onHandQty: extraction.onHandQty,
+            errorMessage: extraction.status !== "success" ? extraction.message : null,
+            extractedAt: new Date().toISOString(),
+          })
+          .where(eq(stationCaptures.id, id));
+
+        // Fetch updated station
+        const updatedStation = await db.query.stationCaptures.findFirst({
+          where: eq(stationCaptures.id, id),
+        });
+
+        return c.json({
+          station: updatedStation,
+          extraction: {
+            status: extraction.status,
+            message: extraction.message,
+          },
+        });
+      } catch (error) {
+        console.error("Failed to extract station:", error);
+        return c.json({ error: "Failed to extract station" }, 500);
+      }
+    },
+  )
+  // Get coverage status for a session
+  .get(
+    "/sessions/:sessionId/coverage",
+    zValidator("param", z.object({ sessionId: z.string().uuid() })),
+    async (c) => {
+      const { sessionId } = c.req.valid("param");
+
+      try {
+        // Get all groups with extraction results to compute demand
+        const groups = await db.query.employeeCaptureGroups.findMany({
+          where: eq(
+            (await import("@/lib/db/schema")).employeeCaptureGroups.sessionId,
+            sessionId,
+          ),
+          with: {
+            extractionResult: true,
+          },
+        });
+
+        // Aggregate demand from extraction results
+        const demandMap = new Map<string, number>();
+        for (const group of groups) {
+          if (!group.extractionResult) continue;
+          if (group.extractionResult.status === "error") continue;
+
+          for (const lineItem of group.extractionResult.lineItems) {
+            const existing = demandMap.get(lineItem.primaryCode) || 0;
+            demandMap.set(lineItem.primaryCode, existing + lineItem.quantity);
+          }
+        }
+
+        // Get all stations for this session
+        const stations = await db.query.stationCaptures.findMany({
+          where: eq(stationCaptures.sessionId, sessionId),
+        });
+
+        // Build coverage map
+        const coverage = Array.from(demandMap.entries()).map(
+          ([productCode, demandQty]) => {
+            const matchingStation = stations.find(
+              (s) =>
+                s.productCode === productCode &&
+                s.status === "valid" &&
+                s.onHandQty !== null &&
+                s.maxQty !== null,
+            );
+
+            return {
+              productCode,
+              demandQty,
+              hasValidStation: !!matchingStation,
+              stationId: matchingStation?.id,
+              onHandQty: matchingStation?.onHandQty,
+              minQty: matchingStation?.minQty,
+              maxQty: matchingStation?.maxQty,
+            };
+          },
+        );
+
+        const canProceed = coverage.every((c) => c.hasValidStation);
+        const coveredCount = coverage.filter((c) => c.hasValidStation).length;
+        const totalCount = coverage.length;
+
+        return c.json({
+          coverage,
+          summary: {
+            canProceed,
+            coveredCount,
+            totalCount,
+            percentage:
+              totalCount > 0
+                ? Math.round((coveredCount / totalCount) * 100)
+                : 0,
+          },
+        });
+      } catch (error) {
+        console.error("Failed to get coverage:", error);
+        return c.json({ error: "Failed to get coverage status" }, 500);
+      }
+    },
+  );

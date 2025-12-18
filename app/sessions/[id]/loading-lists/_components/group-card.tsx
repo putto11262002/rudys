@@ -57,7 +57,7 @@ function StatusBadge({
 }) {
   if (isExtracting) {
     return (
-      <Badge variant="default" className="bg-blue-100 text-blue-800 hover:bg-blue-100">
+      <Badge variant="info">
         <Loader2 className="size-3 mr-1 animate-spin" />
         Extracting
       </Badge>
@@ -68,7 +68,7 @@ function StatusBadge({
   if (groupStatus === "extracted" || groupStatus === "needs_attention") {
     if (extractionStatus === "error") {
       return (
-        <Badge variant="default" className="bg-red-100 text-red-800 hover:bg-red-100">
+        <Badge variant="error">
           <AlertCircle className="size-3 mr-1" />
           Error
         </Badge>
@@ -77,7 +77,7 @@ function StatusBadge({
 
     if (extractionStatus === "warning") {
       return (
-        <Badge variant="default" className="bg-amber-100 text-amber-800 hover:bg-amber-100">
+        <Badge variant="warning">
           <AlertTriangle className="size-3 mr-1" />
           Warning
         </Badge>
@@ -86,7 +86,7 @@ function StatusBadge({
 
     // Success
     return (
-      <Badge variant="default" className="bg-green-100 text-green-800 hover:bg-green-100">
+      <Badge variant="success">
         <CheckCircle className="size-3 mr-1" />
         Extracted
       </Badge>
@@ -95,7 +95,7 @@ function StatusBadge({
 
   // Pending status
   return (
-    <Badge variant="secondary">
+    <Badge variant="info">
       <Clock className="size-3 mr-1" />
       Pending
     </Badge>
@@ -222,17 +222,20 @@ function ExtractionDataView({
     <div className="space-y-4">
       {/* Status message */}
       {message && (
-        <div
-          className={cn(
-            "text-xs px-2 py-1 rounded",
-            status === "error" && "bg-red-100 text-red-800",
-            status === "warning" && "bg-amber-100 text-amber-800",
-            status === "success" && "bg-green-100 text-green-800",
-            !status && "bg-muted"
-          )}
+        <Badge
+          variant={
+            status === "error"
+              ? "error"
+              : status === "warning"
+                ? "warning"
+                : status === "success"
+                  ? "success"
+                  : "info"
+          }
+          className="w-full justify-start"
         >
           {message}
-        </div>
+        </Badge>
       )}
 
       {/* Activities with their line items */}

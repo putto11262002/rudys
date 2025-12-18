@@ -90,6 +90,7 @@ export type NewLoadingListImage = typeof loadingListImages.$inferInsert;
 export const sessionsRelations = relations(sessions, ({ many, one }) => ({
   employeeCaptureGroups: many(employeeCaptureGroups),
   demandSnapshot: one(demandSnapshots),
+  stationCaptures: many(stationCaptures),
 }));
 
 export const employeeCaptureGroupsRelations = relations(
@@ -223,6 +224,103 @@ export type NewDemandSnapshot = typeof demandSnapshots.$inferInsert;
 export const demandSnapshotsRelations = relations(demandSnapshots, ({ one }) => ({
   session: one(sessions, {
     fields: [demandSnapshots.sessionId],
+    references: [sessions.id],
+  }),
+}));
+
+// ============================================================================
+// Station Capture (T6/T7)
+// ============================================================================
+
+// Station capture status enum
+export const stationCaptureStatus = [
+  "pending",
+  "valid",
+  "needs_attention",
+  "failed",
+] as const;
+
+// Match status enum
+export const matchStatusEnum = [
+  "matched",
+  "mismatch",
+  "uncertain",
+  "invalid_images",
+] as const;
+
+// Station capture table - one station = sign image + stock image
+export const stationCaptures = pgTable("station_captures", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  sessionId: uuid("session_id")
+    .notNull()
+    .references(() => sessions.id, { onDelete: "cascade" }),
+  status: text("status", { enum: stationCaptureStatus })
+    .notNull()
+    .default("pending"),
+
+  // Sign image (station label showing product code, min, max)
+  signBlobUrl: text("sign_blob_url"),
+  signWidth: integer("sign_width"),
+  signHeight: integer("sign_height"),
+  signUploadedAt: timestamp("sign_uploaded_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+
+  // Stock image (showing items on shelf)
+  stockBlobUrl: text("stock_blob_url"),
+  stockWidth: integer("stock_width"),
+  stockHeight: integer("stock_height"),
+  stockUploadedAt: timestamp("stock_uploaded_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+
+  // Extraction results (populated after AI extraction)
+  productCode: text("product_code"),
+  minQty: integer("min_qty"),
+  maxQty: integer("max_qty"),
+  onHandQty: integer("on_hand_qty"),
+
+  // Confidence scores
+  signConfidence: real("sign_confidence"),
+  stockCountConfidence: real("stock_count_confidence"),
+  matchConfidence: real("match_confidence"),
+  matchStatus: text("match_status", { enum: matchStatusEnum }),
+  matchReason: text("match_reason"),
+
+  // Issues/warnings from extraction
+  issues: jsonb("issues").$type<StationIssueJson[]>(),
+
+  // Error message (when extraction fails)
+  errorMessage: text("error_message"),
+
+  // Extraction metadata
+  model: text("model"),
+  inputTokens: integer("input_tokens"),
+  outputTokens: integer("output_tokens"),
+  totalCost: real("total_cost"), // USD
+
+  // Timestamps
+  extractedAt: timestamp("extracted_at", { withTimezone: true, mode: "string" }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+    .notNull()
+    .defaultNow(),
+});
+
+// JSON type for station issues
+export type StationIssueJson = {
+  code: string;
+  message: string;
+};
+
+export type StationCapture = typeof stationCaptures.$inferSelect;
+export type NewStationCapture = typeof stationCaptures.$inferInsert;
+
+// Station capture relations
+export const stationCapturesRelations = relations(stationCaptures, ({ one }) => ({
+  session: one(sessions, {
+    fields: [stationCaptures.sessionId],
     references: [sessions.id],
   }),
 }));

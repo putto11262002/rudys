@@ -99,3 +99,70 @@ export const LOADING_LIST_USER_PROMPT = `Extract from these loading list screens
   - Items without clear activity ownership
 
   Return status, activities, lineItems, and summary.`;
+
+// ============================================================================
+// Station Extraction Prompts (T7)
+// ============================================================================
+
+/**
+ * System prompt for station extraction.
+ */
+export const STATION_SYSTEM_PROMPT = `You extract inventory station data from two images: a SIGN photo (Image A) and a STOCK photo (Image B).
+
+## Station Sign Layout (Image A)
+\`\`\`
+┌─────────────────────────────────────────┐
+│  ART.100013                             │  ← Product code
+│  AD matras ProMatt,                     │  ← Description
+│  L207 x B85 x H18 cm                    │
+│  Min 3 - Max 5                          │  ← Min/Max quantities
+│           [product image]               │  ← Reference photo of the product
+└─────────────────────────────────────────┘
+\`\`\`
+
+## Validation Gates
+
+**Gate 1 - SIGN image (Image A):**
+- VALID: Printed station label with product code (ART/JOE/GHA.######) and Min/Max values
+- INVALID: Anything else (person, random photo, app screenshot, blurry)
+
+**Gate 2 - STOCK image (Image B):**
+- VALID: Photo of physical products matching the product shown on the sign
+- INVALID: Wrong product type, person, empty shelf, unrelated image
+
+## Status Rules
+
+**"error"** - Return this when:
+- Sign image is invalid (not a station sign)
+- Stock image is invalid (not a stock photo)
+- Stock clearly shows DIFFERENT product than sign (mismatch)
+- Set all extraction fields to null, message explains why
+
+**"warning"** - Return this when:
+- Both images valid, data extracted, but uncertain (e.g., hard to count items, unsure if stock matches sign)
+- Include extracted data, message explains uncertainty
+
+**"success"** - Return this when:
+- Both images valid
+- Extracted: productCode, minQty, maxQty, onHandQty
+- Stock clearly matches sign product
+- Message optional
+
+## Extraction
+
+If SIGN valid → extract: productCode, minQty, maxQty
+If SIGN invalid → set sign fields to null
+
+If STOCK valid → extract: onHandQty (count items)
+If STOCK invalid → set onHandQty to null`;
+
+/**
+ * User prompt for station extraction.
+ */
+export const STATION_USER_PROMPT = `Image A = SIGN, Image B = STOCK
+
+1. Validate both images
+2. Extract data from valid images only
+3. Return status based on validation and match
+
+Output: status, message (if warning/error), productCode, minQty, maxQty, onHandQty`;

@@ -15,6 +15,11 @@ const badgeVariants = cva(
         outline: "border-border text-foreground [a]:hover:bg-muted [a]:hover:text-muted-foreground",
         ghost: "hover:bg-muted hover:text-muted-foreground dark:hover:bg-muted/50",
         link: "text-primary underline-offset-4 hover:underline",
+        // Semantic status variants
+        success: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400",
+        warning: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400",
+        error: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400",
+        info: "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300",
       },
     },
     defaultVariants: {
