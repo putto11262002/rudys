@@ -1,15 +1,13 @@
 "use server";
 
-import { revalidateTag, updateTag } from "next/cache";
+import { updateTag } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
+import { del } from "@vercel/blob";
 import { db } from "@/lib/db";
-import { sessions } from "@/lib/db/schema";
+import { sessions, employeeCaptureGroups, loadingListImages } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
-
-type ActionResult<T = unknown> =
-  | { ok: true; data: T; message: string }
-  | { ok: false; error: string };
+import type { ActionResult } from "./types";
 
 export async function createSession(): Promise<void> {
   const [session] = await db
@@ -39,6 +37,33 @@ export async function deleteSession(
   }
 
   try {
+    // Get all groups for this session
+    const groups = await db.query.employeeCaptureGroups.findMany({
+      where: eq(employeeCaptureGroups.sessionId, parsed.data.sessionId),
+    });
+
+    // Get all images for all groups
+    const allImages = await Promise.all(
+      groups.map((group) =>
+        db.query.loadingListImages.findMany({
+          where: eq(loadingListImages.groupId, group.id),
+        })
+      )
+    );
+
+    // Delete all blobs in parallel (best-effort)
+    const blobUrls = allImages.flat().map((img) => img.blobUrl);
+    await Promise.all(
+      blobUrls.map(async (url) => {
+        try {
+          await del(url);
+        } catch {
+          console.error(`Failed to delete blob: ${url}`);
+        }
+      })
+    );
+
+    // Delete the session (cascade deletes groups and images via FK)
     const [deleted] = await db
       .delete(sessions)
       .where(eq(sessions.id, parsed.data.sessionId))

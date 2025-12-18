@@ -47,64 +47,25 @@
 
 ### Implementation Summary
 
-**Refs:** Constraints §1, §5, §6, Flow1.2
+**Refs:** Constraints §1, §5, Flow1.2
+
+**Note:** Original plan was client-side upload with route handler callback. Changed to server-side upload via `put()` to enable `updateTag()` cache revalidation (client uploads can't trigger server-side cache invalidation).
 
 **Database:** `lib/db/schema.ts`
-- `employeeCaptureGroups` - Stub table (id, sessionId, employeeLabel, status, createdAt) for FK reference
-- `loadingListImages` - Full table per spec (id, groupId, blobUrl, captureType, orderIndex, width, height, uploadedAt, validation fields, AI classification fields)
-- Migration: `drizzle/0001_nifty_spyke.sql`
+- `employeeCaptureGroups` - Table (id, sessionId, employeeLabel, status, createdAt)
+- `loadingListImages` - Table (id, groupId, blobUrl, captureType, orderIndex, width, height, uploadedAt, validation fields, AI classification fields)
+- Drizzle relations for relational queries
 
-**Route Handler:** `app/api/blob/upload/route.ts`
-- `onBeforeGenerateToken`: Parses clientPayload, validates required fields, constructs blob path per Constraints §5: `sessions/{sessionId}/loading-lists/{groupId}/{imageId}.{ext}`
-- `onUploadCompleted`: Inserts `loadingListImages` row with auto-incrementing orderIndex
-
-**Client Upload Utilities:** `lib/blob/upload.ts`
-- `validateImageForUpload(file)` - Client-side gate per Constraints §1:
-  - MIME types: `image/jpeg`, `image/png`, `image/webp`
-  - Max size: 10MB
-  - Orientation: portrait (height > width)
-- `uploadLoadingListImage({file, sessionId, groupId, captureType})` - Returns `{ok, data, imageId}` or `{ok: false, error}`
-
-**Dependencies added:**
-- `@vercel/blob@2.0.0`
+**Dependencies:**
+- `@vercel/blob` - Server-side `put()` and `del()` functions
 
 ### Environment Variables
-- `BLOB_READ_WRITE_TOKEN` - Vercel Blob token (auto-set in Vercel)
-- `VERCEL_URL` - Set to ngrok URL for local callback testing
+- `BLOB_READ_WRITE_TOKEN` - Vercel Blob token (required)
 
 ### Key Patterns
-- Client validates before upload (fail fast, no blob orphans)
-- Server re-validates via `allowedContentTypes` (defense-in-depth)
-- `clientPayload` passes metadata through token generation to callback
-- Blob paths follow `sessions/{sessionId}/loading-lists/{groupId}/{imageId}.{ext}`
-- DB row created only in `onUploadCompleted` callback (no orphan records)
-
-### Usage (for T3)
-```typescript
-import { uploadLoadingListImage, validateImageForUpload } from "@/lib/blob/upload";
-
-// Validate only (for UI feedback)
-const validation = await validateImageForUpload(file);
-if (!validation.valid) {
-  toast.error(validation.message);
-  return;
-}
-
-// Full upload
-const result = await uploadLoadingListImage({
-  file,
-  sessionId: "...",
-  groupId: "...",
-  captureType: "camera_photo" | "uploaded_file",
-});
-
-if (result.ok) {
-  // result.data.url - blob URL
-  // result.imageId - DB record ID
-} else {
-  toast.error(result.error);
-}
-```
+- Server-side upload via `put()` in server actions (not client upload)
+- Blob paths: `sessions/{sessionId}/loading-lists/{groupId}/{uuid}.{ext}`
+- Enables `updateTag()` for cache revalidation after uploads
 
 ---
 
@@ -116,50 +77,49 @@ if (result.ok) {
 **Refs:** Flow1.1–1.3, FR-7..FR-10, FR-5..FR-6, Constraints §1, §5, NFR-1
 
 **Database:** `lib/db/schema.ts`
-- Added Drizzle relations for `sessions`, `employeeCaptureGroups`, `loadingListImages`
+- Drizzle relations for `sessions`, `employeeCaptureGroups`, `loadingListImages`
 - Enables relational queries with `with: { images: ... }`
 
-**Server Actions:**
-- `lib/actions/groups.ts`
-  - `createEmployeeGroup(sessionId)` - Creates group with auto-incrementing label
-  - `deleteEmployeeGroup(groupId)` - Deletes group + blobs (best-effort)
-- `lib/actions/images.ts`
-  - `reorderImages(groupId, orderedImageIds)` - Updates orderIndex for all images
-  - `deleteImage(imageId)` - Deletes image + blob (best-effort)
+**Shared Types:** `lib/actions/types.ts`
+- `ActionResult<T>` - Standardized server action return type
+
+**Server Actions:** `lib/actions/groups.ts`
+- `createEmployeeGroup(sessionId)` - Creates group with auto-incrementing label ("Employee 1", etc.)
+- `uploadGroupImage(groupId, sessionId, orderIndex, formData)` - Uploads single image via `put()`, creates DB row
+- `finalizeGroup(sessionId)` - Revalidates cache after all uploads complete
+- `deleteEmployeeGroup(groupId)` - Deletes group + blobs in parallel (best-effort)
+
+**Server Actions:** `lib/actions/sessions.ts`
+- `deleteSession(sessionId)` - Now also deletes all blobs for all groups (best-effort)
 
 **Data Loaders:** `lib/data/groups.ts`
 - `getGroupsWithImages(sessionId)` - Cached with `unstable_cache`
 - Tags: `["sessions", "session:${sessionId}", "groups:${sessionId}"]`
 - Returns groups with images ordered by `orderIndex`
 
-**UI Components:** `app/sessions/[id]/loading-lists/`
-- `page.tsx` - Main page with Suspense, empty state, group list
-- `loading.tsx` - Skeleton loading state
-- `_components/add-group-button.tsx` - Creates new employee group
-- `_components/delete-group-button.tsx` - Deletes group with confirmation
-- `_components/group-card.tsx` - Card displaying group with images
-- `_components/image-upload-button.tsx` - Camera capture + file upload
-- `_components/delete-image-button.tsx` - Deletes image with confirmation
-- `_components/sortable-image-grid.tsx` - Drag-drop reordering with @dnd-kit
+**UI Components:** `app/sessions/[id]/loading-lists/_components/`
+- `capture-card.tsx` - Local image capture with camera/upload, client-side validation (5MB max, jpeg/png/webp), batch upload on "Confirm"
+- `group-card.tsx` - Read-only display of completed groups with image thumbnails
+- `group-list-client.tsx` - Client wrapper managing capture state, dynamic import of CaptureCard
+- `delete-group-button.tsx` - Deletes group with AlertDialog confirmation
 
-**Dependencies added:**
-- `@dnd-kit/core@6.3.1`
-- `@dnd-kit/sortable@10.0.0`
-- `@dnd-kit/utilities@3.2.2`
+**Config:** `next.config.ts`
+- `serverActions.bodySizeLimit: "5mb"` - Increased from 1MB default for image uploads
+- `images.remotePatterns` - Allows Vercel Blob images
 
 ### Key Patterns
-- Drag-drop with @dnd-kit: `DndContext` + `SortableContext` + `useSortable`
-- Optimistic UI: update local state immediately, revert on error
-- Image upload uses T2's `uploadLoadingListImage` utility
-- Cache revalidation via `updateTag("groups:${sessionId}")`
-- Continue button disabled until at least one group has images
+- **Separate server action calls per image** - Avoids body size limits, enables parallel uploads via `Promise.all`
+- **Local state until "Confirm"** - Images stored as File objects with preview URLs, uploaded on submit
+- **Client-side validation** - 5MB max, jpeg/png/webp only, validated before adding to local state
+- **Blob cleanup on delete** - Both group and session deletion clean up associated blobs
+- **Cache revalidation** - `updateTag()` called after uploads and deletes
+- **Dynamic import** - `CaptureCard` loaded with `ssr: false` to avoid hydration issues with server actions
 
 ### User Flow
-1. User clicks "Add Employee Group" → creates group with label "Employee 1", "Employee 2", etc.
-2. User clicks Camera/Upload → validates image (portrait, <10MB, jpeg/png/webp) → uploads to Blob → DB row created
-3. User drags images to reorder → optimistic update → server sync
-4. User clicks X on image → confirmation dialog → deletes image + blob
-5. User clicks trash on group → confirmation dialog → deletes group + all images + blobs
-6. User clicks "Continue to Review" → navigates to demand review (T5)
+1. User clicks "Add Loading List" → shows CaptureCard
+2. User captures/uploads images → stored locally with preview, validated (5MB, jpeg/png/webp)
+3. User clicks "Confirm" → creates group → uploads images in parallel → shows success toast
+4. User can add more groups or "Continue to Review"
+5. User can delete groups → confirmation dialog → deletes group + all blobs
 
 ---
