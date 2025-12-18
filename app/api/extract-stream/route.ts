@@ -37,9 +37,21 @@ async function saveExtractionResult(
   });
 }
 
+// Default model if none specified
+const DEFAULT_MODEL = "openai/gpt-4.1-nano";
+
+// Valid models that can be selected
+const VALID_MODELS = [
+  "openai/gpt-4.1-nano",
+  "openai/gpt-5-nano",
+  "openai/gpt-4o-mini",
+  "google/gemini-2.5-flash-lite",
+  "google/gemini-2.0-flash",
+];
+
 export async function POST(request: Request) {
   const body = await request.json();
-  const { groupId } = body;
+  const { groupId, model } = body;
 
   // Validate UUID
   const uuidRegex =
@@ -47,6 +59,9 @@ export async function POST(request: Request) {
   if (!groupId || !uuidRegex.test(groupId)) {
     return Response.json({ error: "Invalid group ID" }, { status: 400 });
   }
+
+  // Validate model (use default if not provided or invalid)
+  const selectedModel = model && VALID_MODELS.includes(model) ? model : DEFAULT_MODEL;
 
   try {
     // Get group with images
@@ -83,7 +98,7 @@ export async function POST(request: Request) {
 
     // Stream the object generation
     const result = streamObject({
-      model: "google/gemini-2.5-flash-lite",
+      model: selectedModel,
       schema: LoadingListExtractionSchema,
       schemaName: "LoadingListExtraction",
       schemaDescription: "Extracted activities and line items from loading list screenshots",

@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/empty";
 import { Card, CardContent } from "@/components/ui/card";
 import { GroupCard } from "./group-card";
+import { ModelSelector, DEFAULT_MODEL_ID } from "./model-selector";
 import { useUpdateSessionStatus } from "@/hooks/sessions";
 import { useGroups, type GroupWithImages } from "@/hooks/groups";
 import { useStreamingExtraction } from "@/hooks/extraction";
@@ -48,6 +49,8 @@ export function GroupListClient({
   const [extractingGroupId, setExtractingGroupId] = useState<string | null>(
     null
   );
+  // Model selection for extraction
+  const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL_ID);
   const updateSessionStatus = useUpdateSessionStatus();
 
   // Streaming extraction - lifted to parent so GroupCard can show partial results
@@ -84,8 +87,8 @@ export function GroupListClient({
     setExtractingGroupId(groupId);
     // Close capture card - group will appear in list via revalidation
     setIsCapturing(false);
-    // Start extraction
-    extract(groupId);
+    // Start extraction with selected model
+    extract(groupId, selectedModel);
   };
 
   const handleComplete = () => {
@@ -135,6 +138,18 @@ export function GroupListClient({
   return (
     <>
       <div className="space-y-4 pb-24">
+        {/* Model selector */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">Model:</span>
+            <ModelSelector
+              value={selectedModel}
+              onChange={setSelectedModel}
+              disabled={isAnyExtracting}
+            />
+          </div>
+        </div>
+
         {/* Capture card at the top when active */}
         {isCapturing && (
           <CaptureCard
@@ -159,7 +174,7 @@ export function GroupListClient({
               // Don't allow if already extracting another group
               if (extractingGroupId !== null) return;
               setExtractingGroupId(group.id);
-              extract(group.id);
+              extract(group.id, selectedModel);
             }}
           />
         ))}
