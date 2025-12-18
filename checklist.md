@@ -109,6 +109,57 @@ if (result.ok) {
 ---
 
 ## T3 - Loading list capture
-### Status: Pending
+### Status: Complete
+
+### Implementation Summary
+
+**Refs:** Flow1.1–1.3, FR-7..FR-10, FR-5..FR-6, Constraints §1, §5, NFR-1
+
+**Database:** `lib/db/schema.ts`
+- Added Drizzle relations for `sessions`, `employeeCaptureGroups`, `loadingListImages`
+- Enables relational queries with `with: { images: ... }`
+
+**Server Actions:**
+- `lib/actions/groups.ts`
+  - `createEmployeeGroup(sessionId)` - Creates group with auto-incrementing label
+  - `deleteEmployeeGroup(groupId)` - Deletes group + blobs (best-effort)
+- `lib/actions/images.ts`
+  - `reorderImages(groupId, orderedImageIds)` - Updates orderIndex for all images
+  - `deleteImage(imageId)` - Deletes image + blob (best-effort)
+
+**Data Loaders:** `lib/data/groups.ts`
+- `getGroupsWithImages(sessionId)` - Cached with `unstable_cache`
+- Tags: `["sessions", "session:${sessionId}", "groups:${sessionId}"]`
+- Returns groups with images ordered by `orderIndex`
+
+**UI Components:** `app/sessions/[id]/loading-lists/`
+- `page.tsx` - Main page with Suspense, empty state, group list
+- `loading.tsx` - Skeleton loading state
+- `_components/add-group-button.tsx` - Creates new employee group
+- `_components/delete-group-button.tsx` - Deletes group with confirmation
+- `_components/group-card.tsx` - Card displaying group with images
+- `_components/image-upload-button.tsx` - Camera capture + file upload
+- `_components/delete-image-button.tsx` - Deletes image with confirmation
+- `_components/sortable-image-grid.tsx` - Drag-drop reordering with @dnd-kit
+
+**Dependencies added:**
+- `@dnd-kit/core@6.3.1`
+- `@dnd-kit/sortable@10.0.0`
+- `@dnd-kit/utilities@3.2.2`
+
+### Key Patterns
+- Drag-drop with @dnd-kit: `DndContext` + `SortableContext` + `useSortable`
+- Optimistic UI: update local state immediately, revert on error
+- Image upload uses T2's `uploadLoadingListImage` utility
+- Cache revalidation via `updateTag("groups:${sessionId}")`
+- Continue button disabled until at least one group has images
+
+### User Flow
+1. User clicks "Add Employee Group" → creates group with label "Employee 1", "Employee 2", etc.
+2. User clicks Camera/Upload → validates image (portrait, <10MB, jpeg/png/webp) → uploads to Blob → DB row created
+3. User drags images to reorder → optimistic update → server sync
+4. User clicks X on image → confirmation dialog → deletes image + blob
+5. User clicks trash on group → confirmation dialog → deletes group + all images + blobs
+6. User clicks "Continue to Review" → navigates to demand review (T5)
 
 ---

@@ -7,6 +7,7 @@ import {
   boolean,
   real,
 } from "drizzle-orm/pg-core";
+import { relations } from "drizzle-orm";
 
 export const sessionState = [
   "draft",
@@ -83,3 +84,29 @@ export const loadingListImages = pgTable("loading_list_images", {
 
 export type LoadingListImage = typeof loadingListImages.$inferSelect;
 export type NewLoadingListImage = typeof loadingListImages.$inferInsert;
+
+// Relations
+export const sessionsRelations = relations(sessions, ({ many }) => ({
+  employeeCaptureGroups: many(employeeCaptureGroups),
+}));
+
+export const employeeCaptureGroupsRelations = relations(
+  employeeCaptureGroups,
+  ({ one, many }) => ({
+    session: one(sessions, {
+      fields: [employeeCaptureGroups.sessionId],
+      references: [sessions.id],
+    }),
+    images: many(loadingListImages),
+  })
+);
+
+export const loadingListImagesRelations = relations(
+  loadingListImages,
+  ({ one }) => ({
+    group: one(employeeCaptureGroups, {
+      fields: [loadingListImages.groupId],
+      references: [employeeCaptureGroups.id],
+    }),
+  })
+);
