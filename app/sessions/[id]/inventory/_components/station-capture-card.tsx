@@ -343,6 +343,7 @@ export function StationCaptureCard({ sessionId }: StationCaptureCardProps) {
       {/* Upload button with model selector */}
       <ButtonGroup className="w-full">
         <Button
+          variant="outline"
           onClick={handleSubmit}
           disabled={isProcessing || !signImage || !stockImage}
           className="flex-1"
@@ -362,11 +363,21 @@ export function StationCaptureCard({ sessionId }: StationCaptureCardProps) {
         <Popover open={modelPopoverOpen} onOpenChange={setModelPopoverOpen}>
           <PopoverTrigger asChild>
             <Button
-              size="icon"
-              disabled={isProcessing}
+              variant="outline"
+              disabled={isProcessing || !signImage || !stockImage}
               aria-label="Select AI model"
+              className="max-w-32 gap-1.5 px-2"
             >
-              <ChevronDown className="size-4" />
+              {AVAILABLE_MODELS.find((m) => m.id === selectedModel)?.provider ===
+              "openai" ? (
+                <OpenAIIcon className="size-4 shrink-0" />
+              ) : (
+                <GoogleIcon className="size-4 shrink-0" />
+              )}
+              <span className="truncate">
+                {AVAILABLE_MODELS.find((m) => m.id === selectedModel)?.name}
+              </span>
+              <ChevronDown className="size-4 shrink-0" />
             </Button>
           </PopoverTrigger>
           <PopoverContent className="w-56 p-0" align="end">
