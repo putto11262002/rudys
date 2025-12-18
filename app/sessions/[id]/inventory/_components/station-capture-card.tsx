@@ -1,13 +1,27 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Camera, ImageUp, Loader2, Upload, X } from "lucide-react";
+import { Camera, Check, ChevronDown, ImageUp, Loader2, Upload, X } from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { ButtonGroup } from "@/components/ui/button-group";
 import {
-  ModelSelector,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandGroup,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
+  AVAILABLE_MODELS,
   DEFAULT_MODEL_ID,
 } from "@/components/ai/model-selector";
+import { OpenAIIcon, GoogleIcon } from "@/components/icons/brand-icons";
 import { useCreateStation, useExtractStation } from "@/hooks/stations";
 import {
   validateImageFile,
@@ -29,6 +43,7 @@ export function StationCaptureCard({ sessionId }: StationCaptureCardProps) {
   const [stockImage, setStockImage] = useState<LocalImage | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL_ID);
+  const [modelPopoverOpen, setModelPopoverOpen] = useState(false);
 
   const signInputRef = useRef<HTMLInputElement>(null);
   const signCameraRef = useRef<HTMLInputElement>(null);
@@ -325,35 +340,93 @@ export function StationCaptureCard({ sessionId }: StationCaptureCardProps) {
         </div>
       </div>
 
-      {/* Model selector - always visible */}
-      <div className="space-y-2">
-        <p className="text-sm font-medium">AI Model</p>
-          <ModelSelector
-            value={selectedModel}
-            onChange={setSelectedModel}
-            disabled={isProcessing}
-          />
-        </div>
-
-      {/* Upload button */}
-      <Button
-        onClick={handleSubmit}
-        disabled={isProcessing || !signImage || !stockImage}
-        variant="outline"
-        className="w-full"
-      >
-        {isProcessing ? (
-          <>
-            <Loader2 className="size-4 mr-2 animate-spin" />
-            Uploading...
-          </>
-        ) : (
-          <>
-            <Upload className="size-4 mr-2" />
-            Upload Station
-          </>
-        )}
-      </Button>
+      {/* Upload button with model selector */}
+      <ButtonGroup className="w-full">
+        <Button
+          onClick={handleSubmit}
+          disabled={isProcessing || !signImage || !stockImage}
+          className="flex-1"
+        >
+          {isProcessing ? (
+            <>
+              <Loader2 className="size-4 animate-spin" />
+              Uploading...
+            </>
+          ) : (
+            <>
+              <Upload className="size-4" />
+              Confirm & Extract
+            </>
+          )}
+        </Button>
+        <Popover open={modelPopoverOpen} onOpenChange={setModelPopoverOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              size="icon"
+              disabled={isProcessing}
+              aria-label="Select AI model"
+            >
+              <ChevronDown className="size-4" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-56 p-0" align="end">
+            <Command>
+              <CommandList>
+                <CommandGroup heading="OpenAI">
+                  {AVAILABLE_MODELS.filter((m) => m.provider === "openai").map(
+                    (model) => (
+                      <CommandItem
+                        key={model.id}
+                        value={model.id}
+                        onSelect={() => {
+                          setSelectedModel(model.id);
+                          setModelPopoverOpen(false);
+                        }}
+                      >
+                        <Check
+                          className={cn(
+                            "mr-2 size-4",
+                            selectedModel === model.id
+                              ? "opacity-100"
+                              : "opacity-0"
+                          )}
+                        />
+                        <OpenAIIcon className="mr-2 size-4" />
+                        <span className="whitespace-nowrap">{model.name}</span>
+                      </CommandItem>
+                    )
+                  )}
+                </CommandGroup>
+                <CommandGroup heading="Google">
+                  {AVAILABLE_MODELS.filter((m) => m.provider === "google").map(
+                    (model) => (
+                      <CommandItem
+                        key={model.id}
+                        value={model.id}
+                        onSelect={() => {
+                          setSelectedModel(model.id);
+                          setModelPopoverOpen(false);
+                        }}
+                      >
+                        <Check
+                          className={cn(
+                            "mr-2 size-4",
+                            selectedModel === model.id
+                              ? "opacity-100"
+                              : "opacity-0"
+                          )}
+                        />
+                        <GoogleIcon className="mr-2 size-4" />
+                        <span className="whitespace-nowrap">{model.name}</span>
+                      </CommandItem>
+                    )
+                  )}
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+      </ButtonGroup>
     </div>
   );
 }
