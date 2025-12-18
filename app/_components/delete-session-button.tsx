@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import { Loader2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { deleteSession } from "@/lib/actions/sessions";
+import { useDeleteSession } from "@/hooks/sessions";
 
 interface DeleteSessionButtonProps {
   sessionId: string;
@@ -23,17 +23,17 @@ interface DeleteSessionButtonProps {
 
 export function DeleteSessionButton({ sessionId }: DeleteSessionButtonProps) {
   const [open, setOpen] = useState(false);
-  const [isPending, startTransition] = useTransition();
+  const deleteSession = useDeleteSession();
 
   const handleDelete = () => {
-    startTransition(async () => {
-      const result = await deleteSession(sessionId);
-      if (result.ok) {
-        toast.success(result.message);
+    deleteSession.mutate(sessionId, {
+      onSuccess: () => {
+        toast.success("Session deleted");
         setOpen(false);
-      } else {
-        toast.error(result.error);
-      }
+      },
+      onError: (error) => {
+        toast.error(error.message);
+      },
     });
   };
 
@@ -54,13 +54,15 @@ export function DeleteSessionButton({ sessionId }: DeleteSessionButtonProps) {
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={isPending}>Cancel</AlertDialogCancel>
+          <AlertDialogCancel disabled={deleteSession.isPending}>
+            Cancel
+          </AlertDialogCancel>
           <AlertDialogAction
             onClick={handleDelete}
-            disabled={isPending}
+            disabled={deleteSession.isPending}
             className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
           >
-            {isPending ? (
+            {deleteSession.isPending ? (
               <>
                 <Loader2 className="size-4 mr-2 animate-spin" />
                 Deleting...

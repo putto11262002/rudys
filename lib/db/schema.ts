@@ -21,7 +21,7 @@ export const sessionState = [
 
 export const sessions = pgTable("sessions", {
   id: uuid("id").primaryKey().defaultRandom(),
-  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
     .notNull()
     .defaultNow(),
   status: text("status", { enum: sessionState })
@@ -49,7 +49,7 @@ export const employeeCaptureGroups = pgTable("employee_capture_groups", {
   status: text("status", { enum: employeeCaptureGroupStatus })
     .notNull()
     .default("pending"),
-  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
     .notNull()
     .defaultNow(),
 });
@@ -71,7 +71,7 @@ export const loadingListImages = pgTable("loading_list_images", {
   orderIndex: integer("order_index").notNull().default(0),
   width: integer("width").notNull(),
   height: integer("height").notNull(),
-  uploadedAt: timestamp("uploaded_at", { withTimezone: true, mode: "date" })
+  uploadedAt: timestamp("uploaded_at", { withTimezone: true, mode: "string" })
     .notNull()
     .defaultNow(),
   // Upload validation
@@ -122,86 +122,42 @@ export const loadingListExtractionResults = pgTable(
       .notNull()
       .references(() => employeeCaptureGroups.id, { onDelete: "cascade" }),
 
-    // Raw extraction output (JSON) - matches LoadingListExtractionSchema
-    imageChecks: jsonb("image_checks").notNull().$type<ImageCheckJson[]>(),
+    // Extraction status: success, warning, error
+    status: text("status", { enum: ["success", "warning", "error"] }).notNull(),
+    message: text("message"),
+
+    // Extracted data (JSON)
     activities: jsonb("activities").notNull().$type<ActivityJson[]>(),
     lineItems: jsonb("line_items").notNull().$type<LineItemJson[]>(),
-    ignoredImages: jsonb("ignored_images")
-      .notNull()
-      .$type<IgnoredImageJson[]>(),
-    warnings: jsonb("warnings").notNull().$type<WarningJson[]>(),
     summary: jsonb("summary").notNull().$type<ExtractionSummaryJson>(),
 
-    extractedAt: timestamp("extracted_at", { withTimezone: true, mode: "date" })
+    extractedAt: timestamp("extracted_at", { withTimezone: true, mode: "string" })
       .notNull()
       .defaultNow(),
   }
 );
 
-// JSON types for extraction results (matches Zod schema output)
-export type ImageCheckJson = {
-  imageIndex: number;
-  isLoadingList: boolean;
-  loadingListConfidence: number;
-  notLoadingListReason?: string;
-  isContinuationOfPrevious?: boolean;
-  continuationConfidence?: number;
-  sequenceNote?: "ok" | "overlap" | "gap" | "uncertain";
-};
-
+// JSON types for extraction results (matches simplified Zod schema)
 export type ActivityJson = {
   activityCode: string;
-  room?: string;
-  endUser?: string;
-  notes?: string;
-  confidence: number;
-  evidence: {
-    firstSeenImageIndex: number;
-  };
 };
 
 export type LineItemJson = {
-  lineItemId: string;
   activityCode: string;
-  codes: string[];
   primaryCode: string;
-  primaryCodeConfidence: number;
+  secondaryCode?: string;
   description?: string;
   internalCode?: string;
   quantity: number;
-  isPartial: boolean;
-  reconciled: boolean;
-  confidence: number;
-  evidence: {
-    imageIndex: number;
-  };
-};
-
-export type IgnoredImageJson = {
-  imageIndex: number;
-  reason: string;
-};
-
-export type WarningJson = {
-  code:
-    | "NOT_LOADING_LIST"
-    | "LOW_CONFIDENCE"
-    | "PARTIAL_ITEM_IGNORED"
-    | "PARTIAL_NOT_RECONCILED"
-    | "POSSIBLE_DUPLICATE"
-    | "SEQUENCE_GAP_OR_REORDER"
-    | "UNREADABLE";
-  severity: "info" | "warn" | "block";
-  message: string;
-  imageIndex?: number;
-  lineItemId?: string;
+  room?: string;
+  endUser?: string;
 };
 
 export type ExtractionSummaryJson = {
-  totalLoadingListImages: number;
+  totalImages: number;
+  validImages: number;
   totalActivities: number;
-  totalLineItemsCounted: number;
-  totalLineItemsIgnored: number;
+  totalLineItems: number;
 };
 
 export type LoadingListExtractionResult =

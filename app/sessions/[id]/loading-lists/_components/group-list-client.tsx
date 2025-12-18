@@ -15,8 +15,9 @@ import {
 } from "@/components/ui/empty";
 import { Card, CardContent } from "@/components/ui/card";
 import { GroupCard } from "./group-card";
-import { updateSessionStatus } from "@/lib/actions/sessions";
-import type { GroupWithImages } from "@/lib/data/groups";
+import { useUpdateSessionStatus } from "@/hooks/sessions";
+import { useGroups, type GroupWithImages } from "@/hooks/groups";
+import { useStreamingExtraction } from "@/hooks/extraction";
 
 const CaptureCard = dynamic(
   () => import("./capture-card").then((m) => m.CaptureCard),
@@ -43,47 +44,72 @@ export function GroupListClient({
 }: GroupListClientProps) {
   const router = useRouter();
   const [isCapturing, setIsCapturing] = useState(false);
-  const [isNavigating, setIsNavigating] = useState(false);
-  // Track which groups are currently extracting
-  const [extractingGroupIds, setExtractingGroupIds] = useState<Set<string>>(
-    new Set()
+  // Track which group is currently extracting (only one at a time with streaming)
+  const [extractingGroupId, setExtractingGroupId] = useState<string | null>(
+    null
   );
+  const updateSessionStatus = useUpdateSessionStatus();
 
-  const groups = initialGroups;
+  // Streaming extraction - lifted to parent so GroupCard can show partial results
+  const {
+    partialResult,
+    isExtracting,
+    extract,
+    groupId: streamingGroupId,
+  } = useStreamingExtraction({
+    sessionId,
+    onComplete: () => {
+      toast.success("Extraction completed");
+      setExtractingGroupId(null);
+    },
+    onError: (error) => {
+      toast.error("Extraction failed", {
+        description: error.message,
+      });
+      setExtractingGroupId(null);
+    },
+  });
+
+  // Use React Query for live updates - initialGroups is fallback only
+  const { data: groupsData } = useGroups(sessionId);
+  const groups = groupsData?.groups ?? initialGroups;
 
   // Groups with images (for enabling Continue button)
   const groupsWithImages = groups.filter((g) => g.images.length > 0);
   const hasAnyImages = groupsWithImages.length > 0;
-  const isAnyExtracting = extractingGroupIds.size > 0;
+  const isAnyExtracting = extractingGroupId !== null;
 
   const handleStarted = (groupId: string) => {
-    // Mark this group as extracting
-    setExtractingGroupIds((prev) => new Set(prev).add(groupId));
+    // Mark this group as extracting and start streaming
+    setExtractingGroupId(groupId);
     // Close capture card - group will appear in list via revalidation
     setIsCapturing(false);
+    // Start extraction
+    extract(groupId);
   };
 
   const handleComplete = () => {
-    // Clear all extracting states - revalidation will update the UI
-    setExtractingGroupIds(new Set());
+    // Clear extracting state - already handled by streaming onComplete
   };
 
-  const handleContinueToReview = async () => {
+  const handleContinueToReview = () => {
     if (!hasAnyImages) {
       toast.error("No images to review");
       return;
     }
 
-    setIsNavigating(true);
-
     // Update session status and navigate to demand page
-    const result = await updateSessionStatus(sessionId, "review_demand");
-    if (result.ok) {
-      router.push(`/sessions/${sessionId}/demand`);
-    } else {
-      toast.error("Failed to update session status");
-      setIsNavigating(false);
-    }
+    updateSessionStatus.mutate(
+      { id: sessionId, status: "review_demand" },
+      {
+        onSuccess: () => {
+          router.push(`/sessions/${sessionId}/demand`);
+        },
+        onError: (error) => {
+          toast.error(error.message);
+        },
+      }
+    );
   };
 
   if (groups.length === 0 && !isCapturing) {
@@ -124,7 +150,11 @@ export function GroupListClient({
           <GroupCard
             key={group.id}
             group={group}
-            isExtracting={extractingGroupIds.has(group.id)}
+            sessionId={sessionId}
+            isExtracting={extractingGroupId === group.id && isExtracting}
+            streamingResult={
+              extractingGroupId === group.id ? partialResult : undefined
+            }
           />
         ))}
       </div>
@@ -145,9 +175,9 @@ export function GroupListClient({
           {/* Continue to Review - blocked only during extraction */}
           <Button
             onClick={handleContinueToReview}
-            disabled={!hasAnyImages || isNavigating || isAnyExtracting}
+            disabled={!hasAnyImages || updateSessionStatus.isPending || isAnyExtracting}
           >
-            {isNavigating ? (
+            {updateSessionStatus.isPending ? (
               <>
                 <Loader2 className="size-4 mr-2 animate-spin" />
                 Loading...

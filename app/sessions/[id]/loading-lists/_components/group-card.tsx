@@ -5,6 +5,7 @@ import Image from "next/image";
 import {
   CheckCircle,
   AlertCircle,
+  AlertTriangle,
   Clock,
   ChevronDown,
   ImageIcon,
@@ -27,68 +28,76 @@ import {
 } from "@/components/ui/collapsible";
 import { DeleteGroupButton } from "./delete-group-button";
 import { cn } from "@/lib/utils";
-import type { GroupWithImages } from "@/lib/data/groups";
-import type {
-  Activity,
-  LineItem,
-  Warning,
-} from "@/lib/ai/schemas/loading-list-extraction";
+import type { GroupWithImages } from "@/hooks/groups";
+import type { LoadingListExtraction } from "@/lib/ai/schemas/loading-list-extraction";
+
+// DeepPartial type for streaming results where any field can be undefined
+type DeepPartial<T> = {
+  [P in keyof T]?: T[P] extends object ? DeepPartial<T[P]> : T[P];
+};
 
 interface GroupCardProps {
   group: GroupWithImages;
-  /** Whether extraction is currently in progress */
+  sessionId: string;
   isExtracting?: boolean;
+  /** Partial streaming result during extraction */
+  streamingResult?: DeepPartial<LoadingListExtraction>;
 }
 
 function StatusBadge({
-  status,
+  groupStatus,
+  extractionStatus,
   isExtracting,
 }: {
-  status: string;
+  groupStatus: string;
+  extractionStatus?: "success" | "warning" | "error" | null;
   isExtracting?: boolean;
 }) {
   if (isExtracting) {
     return (
-      <Badge
-        variant="default"
-        className="bg-blue-100 text-blue-800 hover:bg-blue-100"
-      >
+      <Badge variant="default" className="bg-blue-100 text-blue-800 hover:bg-blue-100">
         <Loader2 className="size-3 mr-1 animate-spin" />
         Extracting
       </Badge>
     );
   }
 
-  switch (status) {
-    case "extracted":
+  // Check extraction status for extracted groups
+  if (groupStatus === "extracted" || groupStatus === "needs_attention") {
+    if (extractionStatus === "error") {
       return (
-        <Badge
-          variant="default"
-          className="bg-green-100 text-green-800 hover:bg-green-100"
-        >
-          <CheckCircle className="size-3 mr-1" />
-          Extracted
-        </Badge>
-      );
-    case "needs_attention":
-      return (
-        <Badge
-          variant="default"
-          className="bg-amber-100 text-amber-800 hover:bg-amber-100"
-        >
+        <Badge variant="default" className="bg-red-100 text-red-800 hover:bg-red-100">
           <AlertCircle className="size-3 mr-1" />
-          Needs Attention
+          Error
         </Badge>
       );
-    case "pending":
-    default:
+    }
+
+    if (extractionStatus === "warning") {
       return (
-        <Badge variant="secondary">
-          <Clock className="size-3 mr-1" />
-          Pending
+        <Badge variant="default" className="bg-amber-100 text-amber-800 hover:bg-amber-100">
+          <AlertTriangle className="size-3 mr-1" />
+          Warning
         </Badge>
       );
+    }
+
+    // Success
+    return (
+      <Badge variant="default" className="bg-green-100 text-green-800 hover:bg-green-100">
+        <CheckCircle className="size-3 mr-1" />
+        Extracted
+      </Badge>
+    );
   }
+
+  // Pending status
+  return (
+    <Badge variant="secondary">
+      <Clock className="size-3 mr-1" />
+      Pending
+    </Badge>
+  );
 }
 
 function CollapsibleSection({
@@ -157,59 +166,79 @@ function ImageGrid({ images }: { images: GroupWithImages["images"] }) {
   );
 }
 
+// Normalized extraction data for display (handles both complete and partial)
+interface NormalizedExtraction {
+  status?: string;
+  message?: string | null;
+  activities: Array<{ activityCode?: string }>;
+  lineItems: Array<{
+    activityCode?: string;
+    primaryCode?: string;
+    description?: string;
+    quantity?: number;
+  }>;
+  summary?: {
+    totalActivities?: number;
+    totalLineItems?: number;
+  };
+}
+
 function ExtractionDataView({
   extraction,
+  isStreaming = false,
 }: {
-  extraction: NonNullable<GroupWithImages["extractionResult"]>;
+  extraction: NormalizedExtraction;
+  isStreaming?: boolean;
 }) {
-  const { activities, lineItems, warnings } = extraction;
+  const { status, message, activities = [], lineItems = [] } = extraction;
 
-  const validActivities = activities as Activity[];
-  const validLineItems = lineItems as LineItem[];
-  const validWarnings = warnings as Warning[];
+  // Filter out items without required fields
+  const validLineItems = lineItems.filter(
+    (item) => item?.primaryCode && item?.activityCode
+  );
 
   // Group line items by activity code
-  const itemsByActivity = new Map<string, LineItem[]>();
+  const itemsByActivity = new Map<string, typeof validLineItems>();
   for (const item of validLineItems) {
-    const code = item.activityCode ?? "Unknown";
+    const code = item.activityCode!;
     if (!itemsByActivity.has(code)) {
       itemsByActivity.set(code, []);
     }
     itemsByActivity.get(code)!.push(item);
   }
 
-  // Get activity metadata for each code
-  const activityMetadata = new Map<string, Activity>();
-  for (const activity of validActivities) {
-    if (activity.activityCode) {
-      activityMetadata.set(activity.activityCode, activity);
-    }
-  }
-
-  // Get all unique activity codes (from both activities and line items)
+  // Get all activity codes (from both activities array and line items)
   const allActivityCodes = new Set([
-    ...validActivities.map((a) => a.activityCode).filter(Boolean),
-    ...validLineItems.map((i) => i.activityCode).filter(Boolean),
-  ]) as Set<string>;
+    ...activities.filter((a) => a?.activityCode).map((a) => a.activityCode!),
+    ...validLineItems.map((i) => i.activityCode!),
+  ]);
 
   return (
     <div className="space-y-4">
-      {/* Warnings */}
-      {validWarnings.length > 0 && (
-        <div className="space-y-1">
-          {validWarnings.map((warning, idx) => (
-            <div
-              key={idx}
-              className={cn(
-                "text-xs px-2 py-1 rounded",
-                warning.severity === "block" && "bg-red-100 text-red-800",
-                warning.severity === "warn" && "bg-amber-100 text-amber-800",
-                warning.severity === "info" && "bg-blue-100 text-blue-800"
-              )}
-            >
-              {warning.message}
-            </div>
-          ))}
+      {/* Status message */}
+      {message && (
+        <div
+          className={cn(
+            "text-xs px-2 py-1 rounded",
+            status === "error" && "bg-red-100 text-red-800",
+            status === "warning" && "bg-amber-100 text-amber-800",
+            status === "success" && "bg-green-100 text-green-800",
+            !status && "bg-muted"
+          )}
+        >
+          {message}
+        </div>
+      )}
+
+      {/* Streaming summary */}
+      {isStreaming && extraction.summary && (
+        <div className="flex items-center gap-4 text-xs text-muted-foreground">
+          {extraction.summary.totalActivities !== undefined && (
+            <span>Activities: {extraction.summary.totalActivities}</span>
+          )}
+          {extraction.summary.totalLineItems !== undefined && (
+            <span>Items: {extraction.summary.totalLineItems}</span>
+          )}
         </div>
       )}
 
@@ -217,24 +246,13 @@ function ExtractionDataView({
       {allActivityCodes.size > 0 && (
         <div className="space-y-3 max-h-64 overflow-y-auto">
           {Array.from(allActivityCodes).map((activityCode) => {
-            const activity = activityMetadata.get(activityCode);
             const items = itemsByActivity.get(activityCode) ?? [];
 
             return (
               <div key={activityCode} className="space-y-1">
                 {/* Activity header */}
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <span className="font-mono text-primary">{activityCode}</span>
-                  {activity?.room && (
-                    <span className="text-muted-foreground">
-                      - {activity.room}
-                    </span>
-                  )}
-                  {activity?.endUser && (
-                    <span className="text-muted-foreground text-xs">
-                      ({activity.endUser})
-                    </span>
-                  )}
+                <div className="text-sm font-medium font-mono text-primary">
+                  {activityCode}
                 </div>
 
                 {/* Line items for this activity */}
@@ -245,7 +263,7 @@ function ExtractionDataView({
                         key={idx}
                         className={cn(
                           "flex items-center justify-between text-xs px-2 py-1 rounded bg-muted/30",
-                          item.isPartial && !item.reconciled && "opacity-50"
+                          isStreaming && "animate-pulse"
                         )}
                       >
                         <div className="flex items-center gap-2">
@@ -258,14 +276,14 @@ function ExtractionDataView({
                           )}
                         </div>
                         <Badge variant="secondary" className="text-xs">
-                          x{item.quantity}
+                          x{item.quantity ?? 1}
                         </Badge>
                       </div>
                     ))}
                   </div>
                 ) : (
                   <div className="text-xs text-muted-foreground pl-3 border-l-2 border-muted py-1">
-                    No items
+                    No items yet
                   </div>
                 )}
               </div>
@@ -274,22 +292,53 @@ function ExtractionDataView({
         </div>
       )}
 
-      {/* Empty state */}
-      {allActivityCodes.size === 0 && (
+      {/* Empty state - only show when not streaming */}
+      {allActivityCodes.size === 0 && !isStreaming && (
         <p className="text-sm text-muted-foreground text-center py-4">
           No extraction data
         </p>
+      )}
+
+      {/* Streaming empty state */}
+      {allActivityCodes.size === 0 && isStreaming && (
+        <div className="flex items-center justify-center gap-2 py-4 text-sm text-muted-foreground">
+          <Loader2 className="size-4 animate-spin" />
+          Waiting for data...
+        </div>
       )}
     </div>
   );
 }
 
-export function GroupCard({ group, isExtracting = false }: GroupCardProps) {
+export function GroupCard({
+  group,
+  sessionId,
+  isExtracting = false,
+  streamingResult,
+}: GroupCardProps) {
   const isExtracted =
     group.status === "extracted" || group.status === "needs_attention";
   const hasExtractionResult = group.extractionResult !== null;
 
-  const lineItemCount = group.extractionResult?.lineItems?.length ?? 0;
+  // Use streaming result during extraction, otherwise use stored result
+  const displayResult = isExtracting && streamingResult ? streamingResult : group.extractionResult;
+  const lineItemCount = displayResult?.lineItems?.filter((i) => i?.primaryCode)?.length ?? 0;
+
+  // Normalize the extraction data for display
+  const normalizedExtraction: NormalizedExtraction | null = displayResult
+    ? {
+        status: displayResult.status,
+        message: displayResult.message,
+        activities: (displayResult.activities ?? []) as Array<{ activityCode?: string }>,
+        lineItems: (displayResult.lineItems ?? []) as Array<{
+          activityCode?: string;
+          primaryCode?: string;
+          description?: string;
+          quantity?: number;
+        }>,
+        summary: displayResult.summary as NormalizedExtraction["summary"],
+      }
+    : null;
 
   return (
     <Card>
@@ -299,14 +348,18 @@ export function GroupCard({ group, isExtracting = false }: GroupCardProps) {
           <span className="text-sm font-normal text-muted-foreground">
             ({group.images.length} image{group.images.length !== 1 ? "s" : ""})
           </span>
-          <StatusBadge status={group.status} isExtracting={isExtracting} />
+          <StatusBadge
+            groupStatus={group.status}
+            extractionStatus={group.extractionResult?.status as "success" | "warning" | "error" | undefined}
+            isExtracting={isExtracting}
+          />
         </CardTitle>
         <CardAction>
-          <DeleteGroupButton groupId={group.id} />
+          <DeleteGroupButton groupId={group.id} sessionId={sessionId} />
         </CardAction>
       </CardHeader>
       <CardContent className="space-y-3">
-        {/* Images collapsible - open by default for pending, closed for extracted */}
+        {/* Images collapsible */}
         <CollapsibleSection
           title="Images"
           icon={ImageIcon}
@@ -316,23 +369,26 @@ export function GroupCard({ group, isExtracting = false }: GroupCardProps) {
           <ImageGrid images={group.images} />
         </CollapsibleSection>
 
-        {/* Extracted data collapsible - only show for extracted groups */}
-        {hasExtractionResult && (
+        {/* Extracted data collapsible - show during extraction with streaming results */}
+        {(hasExtractionResult || isExtracting) && normalizedExtraction && (
           <CollapsibleSection
-            title="Extracted Data"
+            title={isExtracting ? "Extracting..." : "Extracted Data"}
             icon={FileText}
-            defaultOpen={isExtracted}
+            defaultOpen={isExtracted || isExtracting}
             count={lineItemCount > 0 ? lineItemCount : undefined}
           >
-            <ExtractionDataView extraction={group.extractionResult!} />
+            <ExtractionDataView
+              extraction={normalizedExtraction}
+              isStreaming={isExtracting}
+            />
           </CollapsibleSection>
         )}
 
-        {/* Extracting state */}
-        {isExtracting && !hasExtractionResult && (
+        {/* Extracting state without any streaming data yet */}
+        {isExtracting && !normalizedExtraction && (
           <div className="flex items-center justify-center gap-2 py-4 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin" />
-            Extracting data from images...
+            Starting extraction...
           </div>
         )}
       </CardContent>

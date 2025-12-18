@@ -1,6 +1,9 @@
-import { Suspense } from "react";
+"use client";
+
 import Link from "next/link";
-import { Plus, FolderOpen } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Plus, FolderOpen, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -17,10 +20,9 @@ import {
   EmptyTitle,
   EmptyDescription,
 } from "@/components/ui/empty";
-import { getSessions } from "@/lib/data/sessions";
-import { createSession } from "@/lib/actions/sessions";
-import { Session } from "@/lib/db/schema";
+import { useSessions, useCreateSession } from "@/hooks/sessions";
 import { DeleteSessionButton } from "./_components/delete-session-button";
+import type { Session } from "@/lib/db/schema";
 
 const statusLabels: Record<Session["status"], string> = {
   draft: "Draft",
@@ -74,56 +76,23 @@ function SessionsListSkeleton() {
   );
 }
 
-async function SessionsList() {
-  const sessions = await getSessions();
-
-  if (sessions.length === 0) {
-    return (
-      <Empty className="border">
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <FolderOpen className="size-4" />
-          </EmptyMedia>
-          <EmptyTitle>No sessions yet</EmptyTitle>
-          <EmptyDescription>
-            Start a new session to capture loading lists and create orders.
-          </EmptyDescription>
-        </EmptyHeader>
-      </Empty>
-    );
-  }
-
-  return (
-    <div className="space-y-3">
-      {sessions.map((session) => (
-        <Card key={session.id}>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle className="text-base">
-                  {formatDateTime(session.createdAt)}
-                </CardTitle>
-                <CardDescription className="mt-1">
-                  <Badge variant={statusVariants[session.status]}>
-                    {statusLabels[session.status]}
-                  </Badge>
-                </CardDescription>
-              </div>
-              <div className="flex gap-2">
-                <Button asChild variant="outline" size="sm">
-                  <Link href={`/sessions/${session.id}`}>Open</Link>
-                </Button>
-                <DeleteSessionButton sessionId={session.id} />
-              </div>
-            </div>
-          </CardHeader>
-        </Card>
-      ))}
-    </div>
-  );
-}
-
 export default function HomePage() {
+  const router = useRouter();
+  const { data, isLoading, error } = useSessions();
+  const createSession = useCreateSession();
+
+  const handleCreateSession = () => {
+    createSession.mutate(undefined, {
+      onSuccess: (data) => {
+        toast.success("Session created");
+        router.push(`/sessions/${data.session.id}/loading-lists`);
+      },
+      onError: (error) => {
+        toast.error(error.message);
+      },
+    });
+  };
+
   return (
     <main className="container max-w-2xl mx-auto p-4 py-8">
       <div className="flex items-center justify-between mb-6">
@@ -133,17 +102,68 @@ export default function HomePage() {
             Manage your loading list capture sessions
           </p>
         </div>
-        <form action={createSession}>
-          <Button type="submit">
+        <Button
+          onClick={handleCreateSession}
+          disabled={createSession.isPending}
+        >
+          {createSession.isPending ? (
+            <Loader2 className="size-4 mr-2 animate-spin" />
+          ) : (
             <Plus className="size-4 mr-2" />
-            New Session
-          </Button>
-        </form>
+          )}
+          New Session
+        </Button>
       </div>
 
-      <Suspense fallback={<SessionsListSkeleton />}>
-        <SessionsList />
-      </Suspense>
+      {isLoading ? (
+        <SessionsListSkeleton />
+      ) : error ? (
+        <Empty className="border">
+          <EmptyHeader>
+            <EmptyTitle>Error loading sessions</EmptyTitle>
+            <EmptyDescription>{error.message}</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      ) : !data?.sessions.length ? (
+        <Empty className="border">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <FolderOpen className="size-4" />
+            </EmptyMedia>
+            <EmptyTitle>No sessions yet</EmptyTitle>
+            <EmptyDescription>
+              Start a new session to capture loading lists and create orders.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      ) : (
+        <div className="space-y-3">
+          {data.sessions.map((session) => (
+            <Card key={session.id}>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-base">
+                      {formatDateTime(session.createdAt)}
+                    </CardTitle>
+                    <CardDescription className="mt-1">
+                      <Badge variant={statusVariants[session.status]}>
+                        {statusLabels[session.status]}
+                      </Badge>
+                    </CardDescription>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button asChild variant="outline" size="sm">
+                      <Link href={`/sessions/${session.id}`}>Open</Link>
+                    </Button>
+                    <DeleteSessionButton sessionId={session.id} />
+                  </div>
+                </div>
+              </CardHeader>
+            </Card>
+          ))}
+        </div>
+      )}
     </main>
   );
 }

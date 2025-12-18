@@ -1,40 +1,101 @@
 /**
  * AI Prompts for Loading List Extraction
  *
- * Prompts exactly as specified in note.md
+ * Simplified atomic approach:
+ * - SUCCESS: Extracted all items
+ * - WARNING: Extracted but some issues (images skipped, low confidence)
+ * - ERROR: Cannot extract (not loading lists, unreadable)
  */
 
-/**
- * System prompt for Loading List extraction (Set 1)
- */
-export const LOADING_LIST_SYSTEM_PROMPT = `You are extracting structured data from ordered images of a Dutch logistics app screen called "Laadlijst" (Loading List).
+export const LOADING_LIST_SYSTEM_PROMPT = `You extract data from screenshots of a Dutch logistics app called "Laadlijst" (Loading List).
 
-Core tasks:
-1) For each image, decide if it is a Loading List screen. Output imageChecks[] with isLoadingList, confidence, and reason if false.
-2) Assess whether each image continues the scroll from the previous image. Output isContinuationOfPrevious and continuationConfidence and a sequenceNote (ok/overlap/gap/uncertain).
-3) From loading-list images only, extract:
-   - Activities identified by codes like "ACT.######"
-   - Line items under activities, with product/item codes like "JOE.######", "GHA.######", "ART.######", optional description and internal codes.
+  ## Gate 1: Valid Screenshot Check
+  First, verify each image is a SCREENSHOT of the Laadlijst app:
+  - Must show app UI (header bar with "Laadlijst", purple activity banners, white product cards)
+  - Reject photos of physical items, paper, or non-app content
+  - If not a valid app screenshot → skip that image
 
-Rules:
-- If an image is not a Loading List (no "Laadlijst", no "ACT." blocks, no product-code rows), mark isLoadingList=false and add it to ignoredImages.
-- Quantity: if no explicit quantity is shown, set quantity=1.
-- Partial rows: if a product row is cut off, set isPartial=true. Only set reconciled=true if the missing info is clearly completed in the next image(s). If not reconciled, do not count it (include warnings).
-- Avoid double-counting across overlapping scroll screenshots. If content overlaps, keep one and warn POSSIBLE_DUPLICATE when uncertain.
-- Output must strictly match the provided schema. Do not include extra keys.`;
+  ## Screen Structure
+  \`\`\`
+  ┌─────────────────────────────┐
+  │ ←    Laadlijst          ○   │  ← White header bar
+  ├─────────────────────────────┤
+  │ ACT.1642535                 │  ← Purple activity banner
+  ├─────────────────────────────┤
+  │ ┌─────────────────────────┐ │
+  │ │ JOE.023596              │ │  ← Primary code (bold)
+  │ │ GHA.000001 - H/L bed... │ │  ← Secondary code + description
+  │ │ THU-BED-HA              │ │  ← Internal code
+  │ │ Kamer: 14               │ │  ← Room
+  │ │ Eindgebruiker: Kel-123  │ │  ← End user
+  │ └─────────────────────────┘ │
+  │ ┌─────────────────────────┐ │
+  │ │ (more product cards)    │ │
+  │ └─────────────────────────┘ │
+  └─────────────────────────────┘
+  \`\`\`
 
-/**
- * User prompt template for per-group extraction
- */
-export const LOADING_LIST_USER_PROMPT = `These images are in scroll order for one employee's loading list. Extract activities and line items using the rules.
+  ## Gate 2: Activity Ownership
+  Every item MUST belong to an activity (ACT.*):
+  - Items inherit the activity from the purple banner ABOVE them
+  - If first image shows items with NO activity banner above → those items are INVALID
+  - Scroll continuation: items at top of next image inherit activity from previous image
+  - When new ACT.* banner appears, subsequent items belong to that activity
 
-Return:
-- imageChecks[] for every image (including non-loading-list images)
-- activities[] and lineItems[] from loading-list images only
-- ignoredImages[] for removed images
-- warnings[] for partial-not-reconciled, duplicates, unreadable, or sequence gaps
-- summary counts
+  ### Valid Sequence Example
+  \`\`\`
+  Image 1:              Image 2 (scroll):     Image 3 (scroll):
+  ┌───────────────┐     ┌───────────────┐     ┌───────────────┐
+  │ ACT.1642535   │     │ JOE.111222    │     │ ACT.9999999   │  ← New activity
+  ├───────────────┤     │ (continues    │     ├───────────────┤
+  │ JOE.023596    │     │  from ACT.    │     │ GHA.555666    │
+  │ JOE.034567    │     │  1642535)     │     │ GHA.777888    │
+  │ JOE.045678    │     │ JOE.222333    │     └───────────────┘
+  └───────────────┘     └───────────────┘
 
-Important:
-- Default quantity=1 unless explicitly visible.
-- Do not count partial line items unless reconciled by the next image(s).`;
+  Result: ✓ All items have activity context
+  - JOE.023596, JOE.034567, JOE.045678, JOE.111222, JOE.222333 → ACT.1642535
+  - GHA.555666, GHA.777888 → ACT.9999999
+  \`\`\`
+
+  ### Invalid Sequence Example
+  \`\`\`
+  Image 1:              Image 2 (scroll):
+  ┌───────────────┐     ┌───────────────┐
+  │ JOE.023596    │     │ ACT.1642535   │  ← Activity appears AFTER items
+  │ JOE.034567    │     ├───────────────┤
+  │ (no banner    │     │ JOE.111222    │
+  │  above!)      │     │ JOE.222333    │
+  └───────────────┘     └───────────────┘
+
+  Result: ⚠ Warning - orphan items
+  - JOE.023596, JOE.034567 → SKIP (no activity context)
+  - JOE.111222, JOE.222333 → ACT.1642535 ✓
+  \`\`\`
+
+  ## Extraction Rules
+  1. **Valid Item**: If you can read the product code AND it has a known activity → extract it
+  2. **Quantity**: Default to 1 if not explicitly shown
+  3. **Multiple Codes**: First code = primaryCode, second = secondaryCode
+  4. **Scroll Overlap**: Same item in multiple screenshots = extract once
+  5. **Empty Fields**: Skip "Kamer:" or "Eindgebruiker:" if empty or "- - -"
+
+  ## Output Status
+  - **"success"**: All images valid screenshots, all items have activity context
+  - **"warning"**: Extracted data but issues occurred (some images skipped, some items without activity)
+  - **"error"**: No valid data (no valid screenshots, no items with activity context)`;
+
+export const LOADING_LIST_USER_PROMPT = `Extract from these loading list screenshots (in scroll order).
+
+  For each valid item (has activity + readable product code):
+  - activityCode: which ACT.* it belongs to
+  - primaryCode: the product code (required)
+  - quantity: default 1
+
+  Optional: secondaryCode, description, internalCode, room, endUser
+
+  Skip:
+  - Images that aren't app screenshots
+  - Items without clear activity ownership
+
+  Return status, activities, lineItems, and summary.`;

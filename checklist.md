@@ -1,5 +1,71 @@
 # Implementation Checklist
 
+## Architecture Migration - Hono + React Query
+
+### Status: Complete
+
+### Migration Summary
+
+Migrated from Next.js Server Actions + `unstable_cache` to:
+- **Hono** for API routes with RPC for end-to-end type safety
+- **React Query** for client-side state management, caching, and data fetching
+- **All client components** (UI unchanged)
+
+### Directory Structure
+
+```
+app/
+  api/
+    [...route]/
+      route.ts      # Main Hono router, exports AppType
+      _sessions.ts  # Session API routes
+      _groups.ts    # Group API routes
+      _extraction.ts# Extraction API routes
+  providers.tsx     # QueryClientProvider wrapper
+
+hooks/
+  sessions/
+    use-sessions.ts # useSessions, useSession, useCreateSession, useDeleteSession, useUpdateSessionStatus
+    query-keys.ts   # sessionKeys factory
+    index.ts        # Re-exports
+  groups/
+    use-groups.ts   # useGroups, useCreateGroupWithImages, useDeleteGroup
+    query-keys.ts   # groupKeys factory
+    types.ts        # GroupWithImages type
+    index.ts        # Re-exports
+  extraction/
+    use-extraction.ts # useExtractionResult, useExtractGroup
+    query-keys.ts     # extractionKeys factory
+    index.ts          # Re-exports
+
+lib/
+  api/
+    client.ts       # Hono RPC client
+```
+
+### Key Patterns
+
+**Hono RPC:**
+- Routes MUST be chained (`.get().post().delete()`) for type inference
+- Export type from chained result: `export type AppType = typeof routes`
+- Route aggregation: `app.route('/path', subRoutes)`
+
+**React Query:**
+- Query key factories for consistent cache keys
+- `useQuery` for data fetching
+- `useMutation` for mutations with cache invalidation in `onSuccess`
+
+**Separation of Concerns:**
+- Hooks ONLY handle cache invalidation - NO UI concerns (toasts, navigation)
+- UI side effects handled in components via `mutate(..., { onSuccess: () => toast(...) })`
+
+### Removed Files
+
+- `lib/actions/` - Server actions (sessions.ts, groups.ts, extraction.ts, types.ts)
+- `lib/data/` - Data loaders (sessions.ts, groups.ts, extraction.ts)
+
+---
+
 ## T1 - Sessions list + create/resume/delete
 
 ### Status: Complete
@@ -11,32 +77,40 @@
 - Connection: `lib/db/index.ts` - Neon serverless + Drizzle ORM
 - Config: `drizzle.config.ts` - Drizzle Kit configuration
 
-**Server Actions:** `lib/actions/sessions.ts`
-- `createSession()` - Creates session, redirects to `/sessions/:id/loading-lists`
-- `deleteSession(sessionId)` - Validates with zod, returns `{ok, data/error, message}`
+**API Routes:** `app/api/[...route]/_sessions.ts`
+- GET `/api/sessions` - List all sessions
+- GET `/api/sessions/:id` - Get single session
+- POST `/api/sessions` - Create session
+- DELETE `/api/sessions/:id` - Delete session + cleanup blobs
+- PATCH `/api/sessions/:id/status` - Update session status
 
-**Data Loaders:** `lib/data/sessions.ts`
-- `getSessions()` - Cached with `unstable_cache`, tag: `"sessions"`
-- `getSession(id)` - Single session lookup, same cache tag
+**React Query Hooks:** `hooks/sessions/`
+- `useSessions()` - List sessions query
+- `useSession(id)` - Single session query
+- `useCreateSession()` - Create mutation
+- `useDeleteSession()` - Delete mutation with cache invalidation
+- `useUpdateSessionStatus()` - Status update mutation
 
 **UI:**
-- Home page: `app/page.tsx` - Sessions list with Suspense/skeleton
+- Home page: `app/page.tsx` - Client component with React Query
 - Delete button: `app/delete-session-button.tsx` - AlertDialog confirmation + toast
-- Session route: `app/sessions/[id]/page.tsx` - Redirects based on status
-- Loading lists stub: `app/sessions/[id]/loading-lists/page.tsx` - Placeholder for T3
+- Session route: `app/sessions/[id]/page.tsx` - Client component with redirect
+- Loading lists stub: `app/sessions/[id]/loading-lists/page.tsx` - Client component
 
 **Dependencies added:**
 - `drizzle-orm`, `@neondatabase/serverless` - DB
 - `zod` - Validation
 - `sonner` - Toasts
+- `hono`, `@hono/zod-validator` - API routes
+- `@tanstack/react-query`, `@tanstack/react-query-devtools` - State management
 
 ### Setup Required
 1. Create `.env.local` with `DATABASE_URL` (see `.env.example`)
 2. Run `bun run db:push` to sync schema to Neon
 
 ### Key Patterns
-- Server actions return `{ok: true, data, message}` or `{ok: false, error}`
-- Cache revalidation: `revalidateTag("sessions", "max")` (Next.js 16 API)
+- API routes return JSON with error field on failure
+- Cache invalidation via React Query `invalidateQueries`
 - Empty state: `Empty` component from shadcn
 - Loading state: Skeleton cards matching actual UI structure
 
@@ -49,7 +123,7 @@
 
 **Refs:** Constraints §1, §5, Flow1.2
 
-**Note:** Original plan was client-side upload with route handler callback. Changed to server-side upload via `put()` to enable `updateTag()` cache revalidation (client uploads can't trigger server-side cache invalidation).
+**Note:** Server-side upload via Hono API route using `put()` from `@vercel/blob`. Images sent as base64 in JSON body.
 
 **Database:** `lib/db/schema.ts`
 - `employeeCaptureGroups` - Table (id, sessionId, employeeLabel, status, createdAt)
@@ -63,9 +137,10 @@
 - `BLOB_READ_WRITE_TOKEN` - Vercel Blob token (required)
 
 ### Key Patterns
-- Server-side upload via `put()` in server actions (not client upload)
+- Server-side upload via `put()` in Hono API route
+- Images sent as base64 in JSON body from client
 - Blob paths: `sessions/{sessionId}/loading-lists/{groupId}/{uuid}.{ext}`
-- Enables `updateTag()` for cache revalidation after uploads
+- Cache invalidation via React Query after uploads
 
 ---
 
@@ -80,22 +155,18 @@
 - Drizzle relations for `sessions`, `employeeCaptureGroups`, `loadingListImages`
 - Enables relational queries with `with: { images: ... }`
 
-**Shared Types:** `lib/actions/types.ts`
-- `ActionResult<T>` - Standardized server action return type
+**API Routes:** `app/api/[...route]/_groups.ts`
+- GET `/api/sessions/:sessionId/groups` - List groups with images
+- POST `/api/sessions/:sessionId/groups` - Create group with base64 images (batch upload)
+- DELETE `/api/groups/:id` - Delete group + cleanup blobs
 
-**Server Actions:** `lib/actions/groups.ts`
-- `createEmployeeGroup(sessionId)` - Creates group with auto-incrementing label ("Employee 1", etc.)
-- `uploadGroupImage(groupId, sessionId, orderIndex, formData)` - Uploads single image via `put()`, creates DB row
-- `finalizeGroup(sessionId)` - Revalidates cache after all uploads complete
-- `deleteEmployeeGroup(groupId)` - Deletes group + blobs in parallel (best-effort)
+**React Query Hooks:** `hooks/groups/`
+- `useGroups(sessionId)` - List groups query
+- `useCreateGroupWithImages()` - Create group with images mutation
+- `useDeleteGroup()` - Delete mutation with cache invalidation
 
-**Server Actions:** `lib/actions/sessions.ts`
-- `deleteSession(sessionId)` - Now also deletes all blobs for all groups (best-effort)
-
-**Data Loaders:** `lib/data/groups.ts`
-- `getGroupsWithImages(sessionId)` - Cached with `unstable_cache`
-- Tags: `["sessions", "session:${sessionId}", "groups:${sessionId}"]`
-- Returns groups with images ordered by `orderIndex`
+**Types:** `hooks/groups/types.ts`
+- `GroupWithImages` - Group with images and extraction result
 
 **UI Components:** `app/sessions/[id]/loading-lists/_components/`
 - `capture-card.tsx` - Local image capture with camera/upload, client-side validation (5MB max, jpeg/png/webp), batch upload on "Confirm"
@@ -104,28 +175,27 @@
 - `delete-group-button.tsx` - Deletes group with AlertDialog confirmation
 
 **Config:** `next.config.ts`
-- `serverActions.bodySizeLimit: "5mb"` - Increased from 1MB default for image uploads
 - `images.remotePatterns` - Allows Vercel Blob images
 
 ### Key Patterns
-- **Separate server action calls per image** - Avoids body size limits, enables parallel uploads via `Promise.all`
+- **Batch upload** - All images sent in single API request as base64
 - **Local state until "Confirm"** - Images stored as File objects with preview URLs, uploaded on submit
 - **Client-side validation** - 5MB max, jpeg/png/webp only, validated before adding to local state
 - **Blob cleanup on delete** - Both group and session deletion clean up associated blobs
-- **Cache revalidation** - `updateTag()` called after uploads and deletes
-- **Dynamic import** - `CaptureCard` loaded with `ssr: false` to avoid hydration issues with server actions
+- **Cache invalidation** - React Query `invalidateQueries` after mutations
+- **Dynamic import** - `CaptureCard` loaded with `ssr: false` to avoid hydration issues
 
 ### User Flow
 1. User clicks "Add Loading List" → shows CaptureCard
 2. User captures/uploads images → stored locally with preview, validated (5MB, jpeg/png/webp)
-3. User clicks "Confirm" → creates group → uploads images in parallel → shows success toast
+3. User clicks "Confirm" → creates group → uploads images → shows success toast
 4. User can add more groups or "Continue to Review"
 5. User can delete groups → confirmation dialog → deletes group + all blobs
 
 ---
 
-## T4 - Loading-list extraction Server Action + persistence
-### Status: Complete
+## T4 - Loading-list extraction API + persistence
+### Status: Complete (Simplified)
 
 ### Implementation Summary
 
@@ -133,100 +203,75 @@
 
 **Dependencies added:**
 - `ai@5.0.115` - Vercel AI SDK core
-- `@ai-sdk/react@2.0.117` - AI SDK React hooks (useObject)
+- `@ai-sdk/react` - React hooks for streaming
 
 ### Environment Variables
 - `AI_GATEWAY_API_KEY` - Required for Vercel AI Gateway
 
+### Simplified Schema Design
+
+**Core Principle:** If we can read the product code, we have a complete item.
+
+Required fields for demand:
+- `primaryCode` (product ID like JOE.023596)
+- `quantity` (default 1)
+- `activityCode` (parent ACT.*)
+
+Everything else is optional metadata.
+
 **Database:** `lib/db/schema.ts`
-- `loadingListExtractionResults` - Table storing AI extraction output per group
+- `loadingListExtractionResults` - Simplified table:
   - `id`, `groupId` (FK), `extractedAt`
-  - `imageChecks` (jsonb) - Per-image loading list classification
-  - `activities` (jsonb) - Extracted ACT.* codes
-  - `lineItems` (jsonb) - Extracted product codes and quantities
-  - `ignoredImages` (jsonb) - Images marked as non-loading-list
-  - `warnings` (jsonb) - Extraction warnings
-  - `summary` (jsonb) - Counts rollup
-- JSON types for type-safe jsonb fields
+  - `status` (text) - "success" | "warning" | "error"
+  - `message` (text) - Explanation for warning/error
+  - `activities` (jsonb) - Array of { activityCode }
+  - `lineItems` (jsonb) - Array of line items
+  - `summary` (jsonb) - { totalImages, validImages, totalActivities, totalLineItems }
 
 **Zod Schemas:** `lib/ai/schemas/loading-list-extraction.ts`
-- `WarningSchema` - Extraction warnings with severity levels
-- `ImageCheckSchema` - Per-image classification result
-- `ActivitySchema` - ACT.* activity with metadata
-- `LineItemSchema` - Product line item with partial reconciliation
-- `LoadingListExtractionSchema` - Full extraction output schema
+- `ActivitySchema` - Just { activityCode }
+- `LineItemSchema` - { activityCode, primaryCode, quantity, + optional fields }
+- `LoadingListExtractionSchema` - { status, message?, activities, lineItems, summary }
 
 **AI Prompts:** `lib/ai/prompts.ts`
-- `LOADING_LIST_SYSTEM_PROMPT` - Dutch "Laadlijst" extraction rules
-- `LOADING_LIST_USER_PROMPT` - Per-group user prompt template
+- Simplified prompts focusing on:
+  - Product code extraction (required)
+  - Quantity (default 1)
+  - Deduplication (handled internally)
 
-**AI Core:** `lib/ai/extract-loading-list.ts`
-- `extractLoadingList(imageUrls)` - Calls GPT-4o-mini via Vercel AI Gateway
-- `safeExtractLoadingList(imageUrls)` - Safe wrapper with error handling
-- Uses Vercel AI Gateway with model string `"openai/gpt-4o-mini"`
+**API Routes:**
+- `app/api/[...route]/_extraction.ts` - Hono route for sync extraction
+- `app/api/extract-stream/route.ts` - Next.js route for streaming extraction
 
-**Route Handler:** `app/api/extract/loading-list/route.ts`
-- POST handler for streaming extraction
-- Uses `streamObject` for real-time streaming to `useObject` hook
-- `onFinish` callback saves extraction result to database
-- 60s timeout for multi-image extraction
-
-**Server Actions:** `lib/actions/extraction.ts`
-- `runLoadingListExtraction(sessionId, groupIds?)` - Main extraction action
-  - Validates session exists
-  - Processes groups sequentially
-  - Persists extraction results to DB
-  - Updates image AI classification fields
-  - Updates group status (`extracted` | `needs_attention`)
-  - Updates session status to `review_demand`
-  - Returns summary with per-group results
-- `getGroupExtractionResult(groupId)` - Retrieves extraction result
-
-**Data Loaders:** `lib/data/extraction.ts`
-- `getGroupsWithExtractionResults(sessionId)` - Groups with extraction data
-- `getExtractionResult(groupId)` - Single extraction result
+**React Query Hooks:** `hooks/extraction/`
+- `useExtractionResult(groupId)` - Get extraction result
+- `useExtractGroup()` - Sync extraction mutation
+- `useStreamingExtraction()` - Streaming extraction with partial results
 
 **UI Components:**
+- `group-list-client.tsx` - Manages streaming extraction state, passes partial results to GroupCard
+- `capture-card.tsx` - Handles image capture/upload only, triggers extraction via parent
+- `group-card.tsx` - Collapsible shows streaming partial results in real-time during extraction
+- `demand/page.tsx` - Aggregates demand, skips error groups
 
-`app/sessions/[id]/loading-lists/_components/group-list-client.tsx`
-- Uses `useObject` hook from `@ai-sdk/react` for streaming extraction
-- "Continue to Review" button triggers extraction for all groups sequentially
-- Shows progress "Extracting 1/N..." with spinner
-- `onFinish` callback chains to next group or navigates to demand page
-- Toast notifications for success/failure
+### Atomic Status Model
 
-`app/sessions/[id]/loading-lists/_components/group-card.tsx`
-- StatusBadge component shows extraction status
-- Pending (clock icon) / Extracted (green check) / Needs Attention (amber alert)
+| Status | Meaning | Data Included |
+|--------|---------|---------------|
+| **success** | All images valid, extracted cleanly | Yes |
+| **warning** | Extracted with issues | Yes (review recommended) |
+| **error** | Cannot extract meaningful data | No |
 
-`app/sessions/[id]/demand/page.tsx`
-- Demand review page showing extraction results
-- Aggregates line items by primaryCode
-- Summary stats (activities, line items, unique products)
-- Warning for ignored partial items
-- Placeholder for T5 approval flow
-
-### Key Patterns
-- **Streaming extraction with useObject** - Real-time updates via `streamObject` + `useObject` hook
-- **Vercel AI Gateway** - Uses `AI_GATEWAY_API_KEY` with model string `"openai/gpt-4o-mini"`
-- **Per-group isolation** - Extraction failures don't block other groups
-- **Blocking warnings** - Groups with severity="block" warnings marked `needs_attention`
-- **Partial item handling** - Items with `isPartial=true && reconciled=false` excluded from demand aggregation
-- **Image classification update** - Individual images updated with AI classification results
-- **Session status transition** - Moves to `review_demand` after extraction
+### Demand Calculation
+1. Skip groups with `status === "error"`
+2. Count all line items from success/warning groups
+3. Aggregate by `primaryCode` across all groups
 
 ### User Flow
-1. User adds loading list images via capture
-2. User clicks "Continue to Review" → triggers extraction
-3. Extraction runs for all groups with images
-4. Toast shows success/failure count
-5. Navigates to demand review page
-6. Demand page shows aggregated product quantities
-
-### Error Handling
-- Network errors caught and reported via toast
-- Failed groups marked `needs_attention`
-- Summary includes success/fail counts
-- Individual group errors logged to console
+1. User adds loading list images → clicks "Confirm"
+2. Images upload → group appears in list → streaming extraction starts
+3. Group card collapsible opens with live partial results (activities, items appear in real-time)
+4. On complete → final status badge (green/yellow/red)
+5. Demand page aggregates all successful extractions
 
 ---

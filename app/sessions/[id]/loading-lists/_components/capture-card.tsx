@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useRef, useState } from "react";
 import { Camera, ImageIcon, Loader2, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -11,8 +11,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { createGroupWithImages } from "@/lib/actions/groups";
-import { extractGroup } from "@/lib/actions/extraction";
+import { useCreateGroupWithImages } from "@/hooks/groups";
 
 // Constraints
 const ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "image/webp"];
@@ -49,14 +48,26 @@ async function fileToBase64(file: File): Promise<string> {
   });
 }
 
-type CaptureStatus = "idle" | "uploading" | "extracting";
+async function getImageDimensions(
+  file: File
+): Promise<{ width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      resolve({ width: img.width, height: img.height });
+      URL.revokeObjectURL(img.src);
+    };
+    img.onerror = reject;
+    img.src = URL.createObjectURL(file);
+  });
+}
 
 interface CaptureCardProps {
   sessionId: string;
   onCancel: () => void;
-  /** Called when upload+extract starts, provides groupId for tracking */
+  /** Called when upload completes, provides groupId for extraction */
   onStarted: (groupId: string) => void;
-  /** Called when everything completes (success or failure) */
+  /** Called when upload fails */
   onComplete: () => void;
 }
 
@@ -67,10 +78,10 @@ export function CaptureCard({
   onComplete,
 }: CaptureCardProps) {
   const [images, setImages] = useState<LocalImage[]>([]);
-  const [status, setStatus] = useState<CaptureStatus>("idle");
-  const [isPending, startTransition] = useTransition();
+  const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const createGroupWithImages = useCreateGroupWithImages();
 
   const addFiles = (files: FileList | null) => {
     if (!files) return;
@@ -110,51 +121,55 @@ export function CaptureCard({
       return;
     }
 
-    setStatus("uploading");
+    setIsUploading(true);
 
-    // Convert images to base64 for server action
+    // Convert images to base64 with dimensions for API
     const imageData = await Promise.all(
-      images.map(async (img) => ({
-        name: img.file.name,
-        type: img.file.type,
-        base64: await fileToBase64(img.file),
-      })),
+      images.map(async (img) => {
+        const [base64, dimensions] = await Promise.all([
+          fileToBase64(img.file),
+          getImageDimensions(img.file),
+        ]);
+        return {
+          name: img.file.name,
+          type: img.file.type,
+          base64,
+          width: dimensions.width,
+          height: dimensions.height,
+        };
+      })
     );
 
     // Cleanup previews
     images.forEach((img) => URL.revokeObjectURL(img.preview));
 
-    // 1. Create group + upload images (revalidates cache)
-    const uploadResult = await createGroupWithImages(sessionId, imageData);
+    // Use mutation with callbacks for UI concerns
+    createGroupWithImages.mutate(
+      { sessionId, images: imageData },
+      {
+        onSuccess: async (data) => {
+          const groupId = data.group?.id;
+          if (!groupId) {
+            toast.error("Failed to create group");
+            setIsUploading(false);
+            return;
+          }
 
-    if (!uploadResult.ok) {
-      toast.error(uploadResult.error);
-      setStatus("idle");
-      return;
-    }
-
-    const { groupId } = uploadResult.data;
-
-    // Notify parent that we've started (group now visible in list)
-    onStarted(groupId);
-
-    // 2. Start extraction (revalidates cache when done)
-    setStatus("extracting");
-    const extractResult = await extractGroup(sessionId, groupId);
-
-    if (extractResult.ok) {
-      toast.success("Extraction completed");
-    } else {
-      toast.error("Extraction failed", {
-        description: extractResult.error,
-      });
-    }
-
-    setStatus("idle");
-    onComplete();
+          // Notify parent - extraction will be handled by parent
+          setImages([]);
+          setIsUploading(false);
+          onStarted(groupId);
+        },
+        onError: (error) => {
+          toast.error(error.message);
+          setIsUploading(false);
+          onComplete();
+        },
+      }
+    );
   };
 
-  const isProcessing = status !== "idle" || isPending;
+  const isProcessing = isUploading || createGroupWithImages.isPending;
 
   return (
     <Card>
@@ -247,19 +262,14 @@ export function CaptureCard({
           onClick={handleSubmit}
           disabled={isProcessing || images.length === 0}
         >
-          {status === "uploading" && (
+          {isUploading ? (
             <>
               <Loader2 className="size-4 mr-2 animate-spin" />
               Uploading...
             </>
+          ) : (
+            "Confirm"
           )}
-          {status === "extracting" && (
-            <>
-              <Loader2 className="size-4 mr-2 animate-spin" />
-              Extracting...
-            </>
-          )}
-          {status === "idle" && !isPending && "Confirm & Extract"}
         </Button>
       </CardFooter>
     </Card>

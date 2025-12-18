@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import { Loader2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -15,26 +15,33 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { deleteEmployeeGroup } from "@/lib/actions/groups";
+import { useDeleteGroup } from "@/hooks/groups";
 
 interface DeleteGroupButtonProps {
   groupId: string;
+  sessionId: string;
 }
 
-export function DeleteGroupButton({ groupId }: DeleteGroupButtonProps) {
+export function DeleteGroupButton({
+  groupId,
+  sessionId,
+}: DeleteGroupButtonProps) {
   const [open, setOpen] = useState(false);
-  const [isPending, startTransition] = useTransition();
+  const deleteGroup = useDeleteGroup();
 
   const handleDelete = () => {
-    startTransition(async () => {
-      const result = await deleteEmployeeGroup(groupId);
-      if (result.ok) {
-        toast.success(result.message);
-        setOpen(false);
-      } else {
-        toast.error(result.error);
+    deleteGroup.mutate(
+      { id: groupId, sessionId },
+      {
+        onSuccess: () => {
+          toast.success("Group deleted");
+          setOpen(false);
+        },
+        onError: (error) => {
+          toast.error(error.message);
+        },
       }
-    });
+    );
   };
 
   return (
@@ -48,18 +55,20 @@ export function DeleteGroupButton({ groupId }: DeleteGroupButtonProps) {
         <AlertDialogHeader>
           <AlertDialogTitle>Delete employee group?</AlertDialogTitle>
           <AlertDialogDescription>
-            This will permanently delete this group and all its images.
-            This action cannot be undone.
+            This will permanently delete this group and all its images. This
+            action cannot be undone.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={isPending}>Cancel</AlertDialogCancel>
+          <AlertDialogCancel disabled={deleteGroup.isPending}>
+            Cancel
+          </AlertDialogCancel>
           <AlertDialogAction
             onClick={handleDelete}
-            disabled={isPending}
+            disabled={deleteGroup.isPending}
             className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
           >
-            {isPending ? (
+            {deleteGroup.isPending ? (
               <>
                 <Loader2 className="size-4 mr-2 animate-spin" />
                 Deleting...

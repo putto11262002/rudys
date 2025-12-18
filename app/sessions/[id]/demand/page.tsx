@@ -1,24 +1,55 @@
+"use client";
+
+import { use } from "react";
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { getSession } from "@/lib/data/sessions";
-import { getGroupsWithExtractionResults } from "@/lib/data/extraction";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useSession } from "@/hooks/sessions";
+import { useGroups } from "@/hooks/groups";
 
 interface DemandPageProps {
   params: Promise<{ id: string }>;
 }
 
-export default async function DemandPage({ params }: DemandPageProps) {
-  const { id } = await params;
-  const session = await getSession(id);
+function DemandSkeleton() {
+  return (
+    <>
+      <div className="grid grid-cols-3 gap-4 mb-6">
+        {[1, 2, 3].map((i) => (
+          <Card key={i}>
+            <CardContent className="pt-6">
+              <Skeleton className="h-8 w-16 mb-1" />
+              <Skeleton className="h-4 w-20" />
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+      <Card>
+        <CardHeader>
+          <Skeleton className="h-6 w-40" />
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-2">
+            {[1, 2, 3, 4, 5].map((i) => (
+              <Skeleton key={i} className="h-10 w-full" />
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+    </>
+  );
+}
 
-  if (!session) {
-    notFound();
-  }
+export default function DemandPage({ params }: DemandPageProps) {
+  const { id } = use(params);
+  const { data: sessionData, isLoading: sessionLoading } = useSession(id);
+  const { data: groupsData, isLoading: groupsLoading } = useGroups(id);
 
-  const groups = await getGroupsWithExtractionResults(id);
+  const isLoading = sessionLoading || groupsLoading;
+  const session = sessionData?.session;
+  const groups = groupsData?.groups ?? [];
 
   // Aggregate demand from all extraction results
   const demandMap = new Map<
@@ -26,22 +57,29 @@ export default async function DemandPage({ params }: DemandPageProps) {
     {
       productCode: string;
       totalQuantity: number;
+      description?: string;
       sources: Array<{
         groupId: string;
         employeeLabel: string | null;
         activityCode: string;
-        lineItemId: string;
       }>;
     }
   >();
 
+  // Check for extraction warnings/errors
+  const groupsWithWarnings = groups.filter(
+    (g) => g.extractionResult?.status === "warning"
+  );
+  const groupsWithErrors = groups.filter(
+    (g) => g.extractionResult?.status === "error"
+  );
+
   for (const group of groups) {
     if (!group.extractionResult) continue;
+    // Skip error groups - their data shouldn't be counted
+    if (group.extractionResult.status === "error") continue;
 
     for (const lineItem of group.extractionResult.lineItems) {
-      // Skip partial items that aren't reconciled
-      if (lineItem.isPartial && !lineItem.reconciled) continue;
-
       const existing = demandMap.get(lineItem.primaryCode);
       if (existing) {
         existing.totalQuantity += lineItem.quantity;
@@ -49,18 +87,17 @@ export default async function DemandPage({ params }: DemandPageProps) {
           groupId: group.id,
           employeeLabel: group.employeeLabel,
           activityCode: lineItem.activityCode,
-          lineItemId: lineItem.lineItemId,
         });
       } else {
         demandMap.set(lineItem.primaryCode, {
           productCode: lineItem.primaryCode,
           totalQuantity: lineItem.quantity,
+          description: lineItem.description,
           sources: [
             {
               groupId: group.id,
               employeeLabel: group.employeeLabel,
               activityCode: lineItem.activityCode,
-              lineItemId: lineItem.lineItemId,
             },
           ],
         });
@@ -78,13 +115,40 @@ export default async function DemandPage({ params }: DemandPageProps) {
     0
   );
   const totalLineItems = groups.reduce(
-    (sum, g) => sum + (g.extractionResult?.summary?.totalLineItemsCounted ?? 0),
+    (sum, g) => sum + (g.extractionResult?.summary?.totalLineItems ?? 0),
     0
   );
-  const totalIgnored = groups.reduce(
-    (sum, g) => sum + (g.extractionResult?.summary?.totalLineItemsIgnored ?? 0),
-    0
-  );
+
+  if (isLoading) {
+    return (
+      <main className="container max-w-2xl mx-auto p-4 py-8">
+        <div className="mb-6">
+          <Button asChild variant="ghost" size="sm" className="mb-4">
+            <Link href={`/sessions/${id}/loading-lists`}>
+              <ArrowLeft className="size-4 mr-2" />
+              Back to Loading Lists
+            </Link>
+          </Button>
+          <Skeleton className="h-8 w-48 mb-2" />
+          <Skeleton className="h-4 w-64" />
+        </div>
+        <DemandSkeleton />
+      </main>
+    );
+  }
+
+  if (!session) {
+    return (
+      <main className="container max-w-2xl mx-auto p-4 py-8">
+        <div className="text-center py-12">
+          <h1 className="text-xl font-semibold">Session not found</h1>
+          <Button asChild variant="link" className="mt-4">
+            <Link href="/">Back to Sessions</Link>
+          </Button>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="container max-w-2xl mx-auto p-4 py-8">
@@ -128,11 +192,20 @@ export default async function DemandPage({ params }: DemandPageProps) {
       </div>
 
       {/* Warnings */}
-      {totalIgnored > 0 && (
+      {groupsWithErrors.length > 0 && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+          <p className="text-red-800 text-sm">
+            {groupsWithErrors.length} group{groupsWithErrors.length !== 1 ? "s" : ""} failed
+            extraction and {groupsWithErrors.length !== 1 ? "are" : "is"} not included in totals.
+          </p>
+        </div>
+      )}
+
+      {groupsWithWarnings.length > 0 && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6">
           <p className="text-amber-800 text-sm">
-            {totalIgnored} line item{totalIgnored !== 1 ? "s" : ""} ignored
-            (partial items not reconciled)
+            {groupsWithWarnings.length} group{groupsWithWarnings.length !== 1 ? "s" : ""} extracted
+            with warnings - review recommended.
           </p>
         </div>
       )}
@@ -158,7 +231,14 @@ export default async function DemandPage({ params }: DemandPageProps) {
                   key={item.productCode}
                   className="grid grid-cols-[1fr_auto] gap-4 py-2 border-b last:border-b-0"
                 >
-                  <div className="font-mono text-sm">{item.productCode}</div>
+                  <div>
+                    <div className="font-mono text-sm">{item.productCode}</div>
+                    {item.description && (
+                      <div className="text-xs text-muted-foreground truncate">
+                        {item.description}
+                      </div>
+                    )}
+                  </div>
                   <div className="font-medium">{item.totalQuantity}</div>
                 </div>
               ))}

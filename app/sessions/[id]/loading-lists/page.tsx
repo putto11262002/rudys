@@ -1,12 +1,13 @@
+"use client";
+
+import { use } from "react";
 import Link from "next/link";
-import { notFound } from "next/navigation";
-import { Suspense } from "react";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { getSession } from "@/lib/data/sessions";
-import { getGroupsWithImages } from "@/lib/data/groups";
+import { useSession } from "@/hooks/sessions";
+import { useGroups } from "@/hooks/groups";
 import { GroupListClient } from "./_components/group-list-client";
 
 interface LoadingListsPageProps {
@@ -37,19 +38,44 @@ function GroupListSkeleton() {
   );
 }
 
-async function GroupList({ sessionId }: { sessionId: string }) {
-  const groups = await getGroupsWithImages(sessionId);
-  return <GroupListClient sessionId={sessionId} initialGroups={groups} />;
-}
+export default function LoadingListsPage({ params }: LoadingListsPageProps) {
+  const { id } = use(params);
+  const { data: sessionData, isLoading: sessionLoading } = useSession(id);
+  const { data: groupsData, isLoading: groupsLoading } = useGroups(id);
 
-export default async function LoadingListsPage({
-  params,
-}: LoadingListsPageProps) {
-  const { id } = await params;
-  const session = await getSession(id);
+  const isLoading = sessionLoading || groupsLoading;
+  const session = sessionData?.session;
+  const groups = groupsData?.groups ?? [];
+
+  if (isLoading) {
+    return (
+      <main className="container max-w-2xl mx-auto p-4 py-8">
+        <div className="mb-6">
+          <Button asChild variant="ghost" size="sm" className="mb-4">
+            <Link href="/">
+              <ArrowLeft className="size-4 mr-2" />
+              Back to Sessions
+            </Link>
+          </Button>
+          <Skeleton className="h-8 w-48 mb-2" />
+          <Skeleton className="h-4 w-64" />
+        </div>
+        <GroupListSkeleton />
+      </main>
+    );
+  }
 
   if (!session) {
-    notFound();
+    return (
+      <main className="container max-w-2xl mx-auto p-4 py-8">
+        <div className="text-center py-12">
+          <h1 className="text-xl font-semibold">Session not found</h1>
+          <Button asChild variant="link" className="mt-4">
+            <Link href="/">Back to Sessions</Link>
+          </Button>
+        </div>
+      </main>
+    );
   }
 
   return (
@@ -71,9 +97,7 @@ export default async function LoadingListsPage({
         </p>
       </div>
 
-      <Suspense fallback={<GroupListSkeleton />}>
-        <GroupList sessionId={id} />
-      </Suspense>
+      <GroupListClient sessionId={id} initialGroups={groups} />
     </main>
   );
 }

@@ -5,22 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1766042551000,
-      "tag": "0000_mighty_penance",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1766044061752,
-      "tag": "0001_nifty_spyke",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1766053223691,
-      "tag": "0002_spicy_stingray",
+      "when": 1766063592332,
+      "tag": "0000_sparkling_maestro",
       "breakpoints": true
     }
   ]
