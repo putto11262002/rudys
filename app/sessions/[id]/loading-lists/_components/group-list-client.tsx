@@ -67,7 +67,7 @@ export function GroupListClient({ sessionId, initialGroups }: GroupListClientPro
 
   return (
     <>
-      <div className="space-y-4">
+      <div className="space-y-4 pb-24">
         {isCapturing && (
           <CaptureCard
             sessionId={sessionId}
@@ -81,20 +81,23 @@ export function GroupListClient({ sessionId, initialGroups }: GroupListClientPro
         ))}
       </div>
 
-      <div className="flex items-center justify-between mt-6">
-        {!isCapturing && (
-          <Button variant="outline" onClick={() => setIsCapturing(true)}>
-            <Plus className="size-4 mr-2" />
-            Add Loading List
+      {/* Floating bottom banner */}
+      <div className="fixed bottom-0 left-0 right-0 bg-background border-t p-4">
+        <div className="container max-w-2xl mx-auto flex items-center justify-between gap-3">
+          {!isCapturing && (
+            <Button variant="outline" onClick={() => setIsCapturing(true)}>
+              <Plus className="size-4 mr-2" />
+              Add Loading List
+            </Button>
+          )}
+          {isCapturing && <div />}
+          <Button asChild disabled={!hasAnyImages}>
+            <Link href={`/sessions/${sessionId}/demand`}>
+              Continue to Review
+              <ArrowRight className="size-4 ml-2" />
+            </Link>
           </Button>
-        )}
-        {isCapturing && <div />}
-        <Button asChild disabled={!hasAnyImages}>
-          <Link href={`/sessions/${sessionId}/demand`}>
-            Continue to Review
-            <ArrowRight className="size-4 ml-2" />
-          </Link>
-        </Button>
+        </div>
       </div>
     </>
   );
