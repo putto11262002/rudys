@@ -8,6 +8,13 @@
       "when": 1766042551000,
       "tag": "0000_mighty_penance",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1766044061752,
+      "tag": "0001_nifty_spyke",
+      "breakpoints": true
     }
   ]
 }
