@@ -792,3 +792,71 @@ Fixed unreliable database persistence when using Vercel AI SDK's `streamObject`.
 | `notes/streaming-extraction-persistence.md` | **Created** - Implementation notes |
 
 ---
+
+## T9 - Session Cleanup (Cron Job)
+### Status: Complete
+
+### Implementation Summary
+
+**IMPORTANT: This diverges from the original spec.**
+
+Original spec (T9) called for cleanup on session completion. Instead, we implemented automatic weekly cleanup via Vercel cron jobs to remove sessions older than 1 week.
+
+| Aspect | Original Spec | Implementation |
+|--------|---------------|----------------|
+| Trigger | On "Mark Completed" action | Weekly cron job (Sundays at midnight UTC) |
+| Scope | Single session on completion | All sessions older than 1 week |
+| Blob cleanup | Best-effort on completion | Best-effort during cron run |
+
+### Architecture
+
+**Shared Cleanup Logic:** `lib/cleanup/session.ts`
+- `deleteSessionWithCleanup(sessionId)` - Deletes single session with all blobs
+- `cleanupOldSessions(maxAgeMs)` - Finds and deletes sessions older than threshold
+
+**Cron Endpoint:** `app/api/cron/cleanup-sessions/route.ts`
+- Secured with `CRON_SECRET` environment variable
+- Vercel sends `Authorization: Bearer <secret>` header
+- Returns summary: `{ deletedSessions, deletedBlobs, failedBlobs, errors }`
+
+**Configuration:** `vercel.json`
+```json
+{
+  "crons": [
+    {
+      "path": "/api/cron/cleanup-sessions",
+      "schedule": "0 0 * * 0"
+    }
+  ]
+}
+```
+
+### Blob Cleanup (Fixed)
+
+Session deletion now cleans up **all** blob types:
+- Loading list images (`loadingListImages.blobUrl`)
+- Station sign images (`stationCaptures.signBlobUrl`)
+- Station stock images (`stationCaptures.stockBlobUrl`)
+
+### Environment Variables
+
+- `CRON_SECRET` - Required for production (min 16 characters)
+
+### Files Created/Modified
+
+| File | Change |
+|------|--------|
+| `lib/cleanup/session.ts` | **Created** - Shared cleanup logic |
+| `app/api/cron/cleanup-sessions/route.ts` | **Created** - Cron endpoint |
+| `app/api/[...route]/_sessions.ts` | Refactored to use shared cleanup |
+| `vercel.json` | **Created** - Cron configuration |
+| `.env.example` | **Created** - Document all env vars |
+
+### Deployment Notes
+
+1. Add `CRON_SECRET` to Vercel environment variables (production only)
+2. Cron jobs only run on production deployments
+3. Can manually trigger via Vercel dashboard: Project → Settings → Cron Jobs
+4. Hobby plan limit: 2 cron jobs
+
+---
