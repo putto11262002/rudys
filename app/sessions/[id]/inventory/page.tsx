@@ -25,35 +25,35 @@ interface InventoryPageProps {
   params: Promise<{ id: string }>;
 }
 
-function InventorySkeleton() {
+function CoverageSkeleton() {
   return (
-    <>
-      <Card className="mb-6">
-        <CardContent className="pt-6">
-          <Skeleton className="h-4 w-32 mb-2" />
-          <Skeleton className="h-2 w-full mb-4" />
-          <div className="space-y-2">
-            {[1, 2, 3].map((i) => (
-              <Skeleton key={i} className="h-8 w-full" />
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-      <div className="space-y-4">
-        {[1, 2].map((i) => (
-          <Card key={i}>
-            <CardContent className="pt-6">
-              <Skeleton className="h-6 w-32 mb-2" />
-              <div className="grid grid-cols-3 gap-4 mt-4">
-                <Skeleton className="h-16 w-full" />
-                <Skeleton className="h-16 w-full" />
-                <Skeleton className="h-16 w-full" />
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-    </>
+    <Card>
+      <CardContent className="pt-6">
+        <Skeleton className="h-5 w-40 mb-3" />
+        <div className="space-y-2">
+          {[1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-8 w-full" />
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function StationCardSkeleton() {
+  return (
+    <Card>
+      <CardContent className="pt-6">
+        <div className="flex items-center justify-between mb-3">
+          <Skeleton className="h-5 w-32" />
+          <Skeleton className="h-5 w-16 rounded-full" />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Skeleton className="h-24 w-full rounded-md" />
+          <Skeleton className="h-24 w-full rounded-md" />
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -64,7 +64,6 @@ export default function InventoryPage({ params }: InventoryPageProps) {
   const { data: stationsData, isLoading: stationsLoading } = useStations(id);
   const { data: coverageData, isLoading: coverageLoading } = useCoverage(id);
 
-  const isLoading = sessionLoading || stationsLoading || coverageLoading;
   const session = sessionData?.session;
   const stations = stationsData?.stations ?? [];
   const coverage = coverageData?.coverage ?? [];
@@ -75,23 +74,8 @@ export default function InventoryPage({ params }: InventoryPageProps) {
     percentage: 0,
   };
 
-  if (isLoading) {
-    return (
-      <main className="container max-w-2xl mx-auto p-4 py-8 pb-24">
-        <div className="mb-6">
-          <Skeleton className="h-8 w-48 mb-2" />
-          <Skeleton className="h-4 w-64" />
-        </div>
-        <InventorySkeleton />
-        <WorkflowNavigation
-          prev={{ href: `/sessions/${id}/demand`, label: "Demand" }}
-          next={{ href: `/sessions/${id}/order`, label: "Order" }}
-        />
-      </main>
-    );
-  }
-
-  if (!session) {
+  // Session not found after loading
+  if (!sessionLoading && !session) {
     return (
       <main className="container max-w-2xl mx-auto p-4 py-8">
         <div className="text-center py-12">
@@ -106,6 +90,7 @@ export default function InventoryPage({ params }: InventoryPageProps) {
 
   return (
     <main className="container max-w-2xl mx-auto p-4 py-8 pb-24">
+      {/* Header - static content shows immediately */}
       <div className="mb-6">
         <h1 className="text-2xl font-bold tracking-tight">Inventory Capture</h1>
         <p className="text-muted-foreground text-sm">
@@ -113,18 +98,27 @@ export default function InventoryPage({ params }: InventoryPageProps) {
         </p>
       </div>
 
-      {/* Station Capture Form - Primary action, always at top */}
+      {/* Station Capture Form - always visible */}
       <div className="mb-6">
         <StationCaptureForm sessionId={id} />
       </div>
 
-      {/* Coverage Summary - What we have vs what we need */}
+      {/* Coverage Summary - skeleton while loading */}
       <div className="mb-6">
-        <CoverageSummaryCard coverage={coverage} summary={summary} />
+        {coverageLoading ? (
+          <CoverageSkeleton />
+        ) : (
+          <CoverageSummaryCard coverage={coverage} summary={summary} />
+        )}
       </div>
 
-      {/* Station List */}
-      {stations.length > 0 && (
+      {/* Station List - skeleton while loading */}
+      {stationsLoading ? (
+        <div className="space-y-4 mb-6">
+          <Skeleton className="h-5 w-28" />
+          <StationCardSkeleton />
+        </div>
+      ) : stations.length > 0 ? (
         <div className="space-y-4 mb-6">
           <h2 className="text-base font-medium">
             Captured ({stations.length})
@@ -133,7 +127,7 @@ export default function InventoryPage({ params }: InventoryPageProps) {
             <StationCard key={station.id} station={station} sessionId={id} />
           ))}
         </div>
-      )}
+      ) : null}
 
       <WorkflowNavigation
         prev={{ href: `/sessions/${id}/demand`, label: "Demand" }}
