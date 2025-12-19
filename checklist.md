@@ -792,3 +792,104 @@ Fixed unreliable database persistence when using Vercel AI SDK's `streamObject`.
 | `notes/streaming-extraction-persistence.md` | **Created** - Implementation notes |
 
 ---
+
+## Simple Access Code Authentication
+### Status: Complete
+
+### Overview
+
+Implemented lightweight code-based authentication to protect the application from unauthorized access. Uses a single shared access code from environment variable.
+
+**Design Decisions:**
+- No database tables needed - uses HMAC-signed session cookies
+- Hono middleware for API protection
+- Client-side AuthGuard component for page protection
+- 7-day session expiry
+
+### Architecture
+
+```
+┌─────────────────┐     ┌──────────────────┐
+│   /sign-in      │────▶│  POST /api/auth  │
+│   (public)      │     │     /login       │
+└─────────────────┘     └────────┬─────────┘
+                                 │
+                    ┌────────────▼────────────┐
+                    │  Verify ACCESS_CODE     │
+                    │  Create signed cookie   │
+                    └────────────┬────────────┘
+                                 │
+┌─────────────────┐     ┌────────▼─────────┐
+│ Protected pages │◀────│  Session cookie  │
+│    /sessions    │     │  (HMAC-SHA256)   │
+└────────┬────────┘     └──────────────────┘
+         │
+┌────────▼────────┐     ┌──────────────────┐
+│  Hono API calls │────▶│  authMiddleware  │
+│  /api/sessions  │     │  validates cookie│
+└─────────────────┘     └──────────────────┘
+```
+
+### Environment Variables
+
+```bash
+ACCESS_CODE=your-secret-access-code    # Required
+SESSION_SECRET=your-32-char-secret     # Optional (has default for dev)
+```
+
+### Session Cookie
+
+- **Format:** `base64url(payload).signature`
+- **Payload:** `{ createdAt, expiresAt }`
+- **Signature:** HMAC-SHA256(payload, SESSION_SECRET)
+- **Security:** HttpOnly, Secure (prod), SameSite=Lax, 7-day expiry
+
+### API Routes
+
+| Route | Method | Auth | Description |
+|-------|--------|------|-------------|
+| `/api/auth/login` | POST | Public | Verify code, create session |
+| `/api/auth/logout` | POST | Public | Clear session cookie |
+| `/api/auth/check` | GET | Public | Check if session is valid |
+| `/api/sessions/*` | * | Protected | All other routes require auth |
+
+### Files Created
+
+| File | Purpose |
+|------|---------|
+| `lib/auth/constants.ts` | Cookie config, expiry times |
+| `lib/auth/session.ts` | Session create/validate/clear utilities |
+| `lib/auth/middleware.ts` | Hono middleware for API protection |
+| `lib/auth/index.ts` | Re-exports |
+| `app/api/[...route]/_auth.ts` | Auth API routes (login/logout/check) |
+| `hooks/auth/query-keys.ts` | Auth query key factory |
+| `hooks/auth/use-auth.ts` | useAuthCheck, useLogin, useLogout hooks |
+| `hooks/auth/index.ts` | Re-exports |
+| `components/auth-guard.tsx` | Client-side auth guard component |
+| `app/sign-in/page.tsx` | Sign-in page UI |
+
+### Files Modified
+
+| File | Change |
+|------|--------|
+| `app/api/[...route]/route.ts` | Added auth routes, applied middleware to protected routes |
+| `app/providers.tsx` | Wrapped children with AuthGuard |
+
+### User Flow
+
+1. User visits any page → AuthGuard checks `/api/auth/check`
+2. If not authenticated → redirect to `/sign-in`
+3. User enters access code → `POST /api/auth/login`
+4. On success → session cookie set, redirect to `/`
+5. All subsequent API calls include session cookie
+6. Hono middleware validates cookie on protected routes
+
+### Security Measures
+
+- **Constant-time comparison** for code verification (prevents timing attacks)
+- **HMAC-SHA256** signatures (tamper-proof cookies)
+- **HttpOnly cookies** (no JS access, prevents XSS)
+- **Secure flag** in production (HTTPS only)
+- **SameSite=Lax** (CSRF protection)
+
+---
