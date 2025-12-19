@@ -13,10 +13,10 @@ import { CoverageSummaryCard } from "./_components/coverage-summary";
 import { WorkflowNavigation } from "@/components/workflow-navigation";
 
 // Dynamic import to avoid hydration issues with camera input
-const StationCaptureCard = dynamic(
+const StationCaptureForm = dynamic(
   () =>
-    import("./_components/station-capture-card").then(
-      (mod) => mod.StationCaptureCard
+    import("./_components/station-capture-form").then(
+      (mod) => mod.StationCaptureForm
     ),
   { ssr: false }
 );
@@ -113,9 +113,9 @@ export default function InventoryPage({ params }: InventoryPageProps) {
         </p>
       </div>
 
-      {/* Station Capture Card - Primary action, always at top */}
+      {/* Station Capture Form - Primary action, always at top */}
       <div className="mb-6">
-        <StationCaptureCard sessionId={id} />
+        <StationCaptureForm sessionId={id} />
       </div>
 
       {/* Coverage Summary - What we have vs what we need */}
