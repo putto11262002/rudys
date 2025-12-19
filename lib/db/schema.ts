@@ -10,13 +10,12 @@ import {
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 
-export const sessionState = [
-  "draft",
-  "capturing_loading_lists",
-  "review_demand",
-  "capturing_inventory",
-  "review_order",
-  "completed",
+// Session phases - tracks last visited phase for resume
+export const sessionPhase = [
+  "loading-lists",
+  "demand",
+  "inventory",
+  "order",
 ] as const;
 
 export const sessions = pgTable("sessions", {
@@ -24,9 +23,9 @@ export const sessions = pgTable("sessions", {
   createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
     .notNull()
     .defaultNow(),
-  status: text("status", { enum: sessionState })
+  lastPhase: text("last_phase", { enum: sessionPhase })
     .notNull()
-    .default("capturing_loading_lists"),
+    .default("loading-lists"),
 });
 
 export type Session = typeof sessions.$inferSelect;
@@ -87,9 +86,8 @@ export type LoadingListImage = typeof loadingListImages.$inferSelect;
 export type NewLoadingListImage = typeof loadingListImages.$inferInsert;
 
 // Relations
-export const sessionsRelations = relations(sessions, ({ many, one }) => ({
+export const sessionsRelations = relations(sessions, ({ many }) => ({
   employeeCaptureGroups: many(employeeCaptureGroups),
-  demandSnapshot: one(demandSnapshots),
   stationCaptures: many(stationCaptures),
 }));
 
@@ -184,49 +182,6 @@ export const loadingListExtractionResultsRelations = relations(
   })
 );
 
-// ============================================================================
-// Demand Snapshots (T5)
-// ============================================================================
-
-// JSON type for demand item in snapshot
-export type DemandItemJson = {
-  productCode: string;
-  demandQty: number;
-  description?: string;
-  sources: Array<{
-    groupId: string;
-    employeeLabel: string | null;
-    activityCode: string;
-  }>;
-};
-
-// Demand snapshot - frozen demand at approval time
-export const demandSnapshots = pgTable("demand_snapshots", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  sessionId: uuid("session_id")
-    .notNull()
-    .unique() // One snapshot per session
-    .references(() => sessions.id, { onDelete: "cascade" }),
-  approvedAt: timestamp("approved_at", { withTimezone: true, mode: "string" })
-    .notNull()
-    .defaultNow(),
-  // Snapshot of demand items as JSONB
-  items: jsonb("items").notNull().$type<DemandItemJson[]>(),
-  // Summary stats at approval time
-  totalProducts: integer("total_products").notNull(),
-  totalQuantity: integer("total_quantity").notNull(),
-});
-
-export type DemandSnapshot = typeof demandSnapshots.$inferSelect;
-export type NewDemandSnapshot = typeof demandSnapshots.$inferInsert;
-
-// Demand snapshot relations
-export const demandSnapshotsRelations = relations(demandSnapshots, ({ one }) => ({
-  session: one(sessions, {
-    fields: [demandSnapshots.sessionId],
-    references: [sessions.id],
-  }),
-}));
 
 // ============================================================================
 // Station Capture (T6/T7)

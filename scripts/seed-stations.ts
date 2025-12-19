@@ -1,7 +1,7 @@
 /**
  * Seed script for station captures
  *
- * Creates valid station data for a session based on its demand snapshot.
+ * Creates valid station data for a session based on its computed demand.
  * Stations are created with on-hand quantities BELOW max to require ordering.
  *
  * Usage:
@@ -12,8 +12,9 @@
  */
 
 import { db } from "@/lib/db";
-import { stationCaptures, demandSnapshots, sessions } from "@/lib/db/schema";
+import { stationCaptures, sessions, employeeCaptureGroups } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+import { computeDemandFromGroups } from "@/lib/workflow/compute";
 
 async function seedStations(sessionId: string) {
   console.log(`\nSeeding stations for session: ${sessionId}\n`);
@@ -28,18 +29,22 @@ async function seedStations(sessionId: string) {
     process.exit(1);
   }
 
-  // Get demand snapshot
-  const snapshot = await db.query.demandSnapshots.findFirst({
-    where: eq(demandSnapshots.sessionId, sessionId),
+  // Get groups with extraction results to compute demand
+  const groups = await db.query.employeeCaptureGroups.findMany({
+    where: eq(employeeCaptureGroups.sessionId, sessionId),
+    with: {
+      extractionResult: true,
+    },
   });
 
-  if (!snapshot) {
-    console.error("No demand snapshot found for this session.");
-    console.error("Please approve demand first before seeding stations.");
+  const demandItems = computeDemandFromGroups(groups);
+
+  if (demandItems.length === 0) {
+    console.error("No demand items found for this session.");
+    console.error("Please extract loading lists first before seeding stations.");
     process.exit(1);
   }
 
-  const demandItems = snapshot.items;
   console.log(`Found ${demandItems.length} products in demand:\n`);
 
   // Delete existing stations for this session

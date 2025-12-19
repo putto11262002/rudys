@@ -3,7 +3,6 @@
 import { use } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { ArrowLeft, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -11,6 +10,7 @@ import { useSession } from "@/hooks/sessions";
 import { useStations, useCoverage } from "@/hooks/stations";
 import { StationCard } from "./_components/station-card";
 import { CoverageSummaryCard } from "./_components/coverage-summary";
+import { WorkflowNavigation } from "@/components/workflow-navigation";
 
 // Dynamic import to avoid hydration issues with camera input
 const StationCaptureCard = dynamic(
@@ -77,18 +77,16 @@ export default function InventoryPage({ params }: InventoryPageProps) {
 
   if (isLoading) {
     return (
-      <main className="container max-w-2xl mx-auto p-4 py-8">
+      <main className="container max-w-2xl mx-auto p-4 py-8 pb-24">
         <div className="mb-6">
-          <Button asChild variant="ghost" size="sm" className="mb-4">
-            <Link href={`/sessions/${id}/demand`}>
-              <ArrowLeft className="size-4 mr-2" />
-              Back to Demand
-            </Link>
-          </Button>
           <Skeleton className="h-8 w-48 mb-2" />
           <Skeleton className="h-4 w-64" />
         </div>
         <InventorySkeleton />
+        <WorkflowNavigation
+          prev={{ href: `/sessions/${id}/demand`, label: "Demand" }}
+          next={{ href: `/sessions/${id}/order`, label: "Order" }}
+        />
       </main>
     );
   }
@@ -107,14 +105,8 @@ export default function InventoryPage({ params }: InventoryPageProps) {
   }
 
   return (
-    <main className="container max-w-2xl mx-auto p-4 py-8">
+    <main className="container max-w-2xl mx-auto p-4 py-8 pb-24">
       <div className="mb-6">
-        <Button asChild variant="ghost" size="sm" className="mb-4">
-          <Link href={`/sessions/${id}/demand`}>
-            <ArrowLeft className="size-4 mr-2" />
-            Back to Demand
-          </Link>
-        </Button>
         <h1 className="text-2xl font-bold tracking-tight">Inventory Capture</h1>
         <p className="text-muted-foreground text-sm">
           Capture station sign and stock photos for each demanded product
@@ -143,31 +135,10 @@ export default function InventoryPage({ params }: InventoryPageProps) {
         </div>
       )}
 
-      {/* Continue to Order Button */}
-      <Button
-        asChild
-        className="w-full"
-        disabled={!summary.canProceed}
-        variant={summary.canProceed ? "default" : "secondary"}
-      >
-        <Link
-          href={summary.canProceed ? `/sessions/${id}/order` : "#"}
-          onClick={(e) => {
-            if (!summary.canProceed) {
-              e.preventDefault();
-            }
-          }}
-        >
-          Continue to Order
-          <ArrowRight className="size-4 ml-2" />
-        </Link>
-      </Button>
-
-      {!summary.canProceed && summary.totalCount > 0 && (
-        <p className="text-center text-sm text-muted-foreground mt-2">
-          All demanded products must have valid stations to continue
-        </p>
-      )}
+      <WorkflowNavigation
+        prev={{ href: `/sessions/${id}/demand`, label: "Demand" }}
+        next={{ href: `/sessions/${id}/order`, label: "Order" }}
+      />
     </main>
   );
 }

@@ -2,11 +2,10 @@
 
 import { use, useMemo } from "react";
 import Link from "next/link";
-import { ArrowLeft, Copy, AlertTriangle, Home } from "lucide-react";
+import { Copy, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Table,
@@ -16,7 +15,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useOrder, type OrderItem, type OrderSession } from "@/hooks/order";
+import { useOrder, type OrderItem } from "@/hooks/order";
+import { WorkflowNavigation } from "@/components/workflow-navigation";
 import { toast } from "sonner";
 
 interface OrderPageProps {
@@ -65,6 +65,7 @@ export default function OrderPage({ params }: OrderPageProps) {
 
   const session = data?.session;
   const orderItems = data?.orderItems ?? [];
+  const skippedItems = data?.skippedItems ?? [];
 
   // Count warnings
   const warningCount = useMemo(
@@ -95,23 +96,10 @@ export default function OrderPage({ params }: OrderPageProps) {
           <Skeleton className="h-4 w-48 mt-1" />
         </div>
         <OrderSkeleton />
-        {/* Floating bottom banner */}
-        <div className="fixed bottom-0 left-0 right-0 bg-background border-t p-4">
-          <div className="container max-w-2xl mx-auto flex items-center justify-between gap-3">
-            <Button asChild variant="outline">
-              <Link href={`/sessions/${id}/inventory`}>
-                <ArrowLeft className="size-4 mr-2" />
-                Back to Inventory
-              </Link>
-            </Button>
-            <Button asChild>
-              <Link href="/">
-                <Home className="size-4 mr-2" />
-                Done
-              </Link>
-            </Button>
-          </div>
-        </div>
+        <WorkflowNavigation
+          prev={{ href: `/sessions/${id}/inventory`, label: "Inventory" }}
+          next={{ href: "/", label: "Done" }}
+        />
       </main>
     );
   }
@@ -126,23 +114,10 @@ export default function OrderPage({ params }: OrderPageProps) {
           <AlertTriangle className="size-4" />
           <AlertDescription>{error.message}</AlertDescription>
         </Alert>
-        {/* Floating bottom banner */}
-        <div className="fixed bottom-0 left-0 right-0 bg-background border-t p-4">
-          <div className="container max-w-2xl mx-auto flex items-center justify-between gap-3">
-            <Button asChild variant="outline">
-              <Link href={`/sessions/${id}/inventory`}>
-                <ArrowLeft className="size-4 mr-2" />
-                Back to Inventory
-              </Link>
-            </Button>
-            <Button asChild>
-              <Link href="/">
-                <Home className="size-4 mr-2" />
-                Done
-              </Link>
-            </Button>
-          </div>
-        </div>
+        <WorkflowNavigation
+          prev={{ href: `/sessions/${id}/inventory`, label: "Inventory" }}
+          next={{ href: "/", label: "Done" }}
+        />
       </main>
     );
   }
@@ -173,6 +148,23 @@ export default function OrderPage({ params }: OrderPageProps) {
         </p>
       </div>
 
+      {/* Skipped Items Warning */}
+      {skippedItems.length > 0 && (
+        <Alert className="mb-6">
+          <AlertTriangle className="size-4" />
+          <AlertDescription>
+            {skippedItems.length} product{skippedItems.length !== 1 ? "s" : ""} skipped due to missing station data:
+            <ul className="mt-2 list-disc list-inside">
+              {skippedItems.map((item) => (
+                <li key={item.productCode} className="font-mono text-sm">
+                  {item.productCode} ({item.reason.replace(/_/g, " ")})
+                </li>
+              ))}
+            </ul>
+          </AlertDescription>
+        </Alert>
+      )}
+
       {/* Warning Banner */}
       {warningCount > 0 && (
         <Alert variant="destructive" className="mb-6">
@@ -188,14 +180,14 @@ export default function OrderPage({ params }: OrderPageProps) {
       <Card className="mb-6">
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Order Items</CardTitle>
-          <Button variant="outline" size="sm" onClick={handleCopy}>
+          <Button variant="outline" size="sm" onClick={handleCopy} disabled={orderItems.length === 0}>
             <Copy className="size-4" />
           </Button>
         </CardHeader>
         <CardContent>
           {orderItems.length === 0 ? (
             <p className="text-muted-foreground text-center py-8">
-              No order items
+              No order items computed
             </p>
           ) : (
             <Table>
@@ -237,23 +229,10 @@ export default function OrderPage({ params }: OrderPageProps) {
         </CardContent>
       </Card>
 
-      {/* Floating bottom banner */}
-      <div className="fixed bottom-0 left-0 right-0 bg-background border-t p-4">
-        <div className="container max-w-2xl mx-auto flex items-center justify-between gap-3">
-          <Button asChild variant="outline">
-            <Link href={`/sessions/${id}/inventory`}>
-              <ArrowLeft className="size-4 mr-2" />
-              Back to Inventory
-            </Link>
-          </Button>
-          <Button asChild variant="outline">
-            <Link href="/">
-              <Home className="size-4 mr-2" />
-              Done
-            </Link>
-          </Button>
-        </div>
-      </div>
+      <WorkflowNavigation
+        prev={{ href: `/sessions/${id}/inventory`, label: "Inventory" }}
+        next={{ href: "/", label: "Done" }}
+      />
     </main>
   );
 }

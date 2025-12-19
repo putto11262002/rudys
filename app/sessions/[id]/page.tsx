@@ -7,13 +7,12 @@ import { Loader2 } from "lucide-react";
 import { useSession } from "@/hooks/sessions";
 import type { Session } from "@/lib/db/schema";
 
-const statusToRoute: Record<Session["status"], string> = {
-  draft: "loading-lists",
-  capturing_loading_lists: "loading-lists",
-  review_demand: "demand",
-  capturing_inventory: "inventory",
-  review_order: "order",
-  completed: "order",
+// Map lastPhase to route
+const phaseToRoute: Record<Session["lastPhase"], string> = {
+  "loading-lists": "loading-lists",
+  demand: "demand",
+  inventory: "inventory",
+  order: "order",
 };
 
 interface SessionPageProps {
@@ -27,7 +26,7 @@ export default function SessionPage({ params }: SessionPageProps) {
 
   useEffect(() => {
     if (data?.session) {
-      const route = statusToRoute[data.session.status];
+      const route = phaseToRoute[data.session.lastPhase] ?? "loading-lists";
       router.replace(`/sessions/${data.session.id}/${route}`);
     }
   }, [data, router]);

@@ -4,7 +4,7 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import {
   sessions,
-  sessionState,
+  sessionPhase,
   employeeCaptureGroups,
   loadingListImages,
 } from "@/lib/db/schema";
@@ -52,7 +52,7 @@ export const sessionRoutes = new Hono()
     try {
       const [session] = await db
         .insert(sessions)
-        .values({ status: "capturing_loading_lists" })
+        .values({ lastPhase: "loading-lists" })
         .returning();
       return c.json({ session }, 201);
     } catch (error) {
@@ -112,29 +112,29 @@ export const sessionRoutes = new Hono()
     }
   )
   .patch(
-    "/:id/status",
+    "/:id/phase",
     zValidator("param", z.object({ id: z.string().uuid() })),
-    zValidator("json", z.object({ status: z.enum(sessionState) })),
+    zValidator("json", z.object({ lastPhase: z.enum(sessionPhase) })),
     async (c) => {
-      // Update session status
+      // Update session last phase (for resume)
       const { id } = c.req.valid("param");
-      const { status } = c.req.valid("json");
+      const { lastPhase } = c.req.valid("json");
 
       try {
         const [updated] = await db
           .update(sessions)
-          .set({ status })
+          .set({ lastPhase })
           .where(eq(sessions.id, id))
-          .returning({ id: sessions.id });
+          .returning();
 
         if (!updated) {
           return c.json({ error: "Session not found" }, 404);
         }
 
-        return c.json({ success: true });
+        return c.json({ session: updated });
       } catch (error) {
-        console.error("Failed to update session status:", error);
-        return c.json({ error: "Failed to update session status" }, 500);
+        console.error("Failed to update session phase:", error);
+        return c.json({ error: "Failed to update session phase" }, 500);
       }
     }
   );

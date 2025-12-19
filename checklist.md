@@ -480,3 +480,159 @@ Stock location: EB5
 5. User copies order text to clipboard
 
 ---
+
+## Session Flow Refactoring - Free Navigation + Computed State
+### Status: Complete
+
+### Overview
+
+**IMPORTANT: This refactoring diverges from the original specs.**
+
+Refactored from a **gate-based workflow** to a **free-navigation workflow**:
+
+| Aspect | Before (Spec) | After (Implementation) |
+|--------|---------------|------------------------|
+| Session status | Gates navigation, requires specific transitions | Tracks "last visited phase" for resume only |
+| Demand | Stored as snapshot after "Approve" action | Always computed from extractions |
+| Order | Requires approved demand snapshot | Computed from extractions + stations |
+| Navigation | Restricted based on status | Free navigation between all phases |
+| Invalid data | Blocks progression | Filtered out, shows partial results |
+
+### Rationale
+
+The original spec treated the workflow as a validation/audit pipeline with approval gates. In practice:
+- Users need to freely navigate between phases to review/edit data
+- Approval checkpoints add friction without adding value (this is a helper tool, not an audit system)
+- Computed state is always fresh and reflects current data
+- Partial data should be shown "as-is", not blocked
+
+### Database Changes
+
+**Removed:**
+- `demandSnapshots` table - No longer needed (demand always computed)
+- `sessionsRelations.demandSnapshot` - Removed relation
+
+**Changed:**
+- `sessionState` → `sessionPhase` enum: `["loading-lists", "demand", "inventory", "order"]`
+- `sessions.status` → `sessions.lastPhase` - Semantic rename, tracks last visited phase
+
+**Migration:** `drizzle/0001_session_flow_refactor.sql`
+
+### API Route Changes
+
+**Removed:**
+- `POST /sessions/:sessionId/demand/approve` - No approval step
+
+**Changed:**
+- `PATCH /sessions/:id/status` → `PATCH /sessions/:id/phase` - Updates last phase
+- `GET /sessions/:sessionId/demand` - Always computes from groups (no snapshot logic)
+- `GET /sessions/:sessionId/order` - Computes from groups + stations, returns `skippedItems` for partial data
+
+### New: Computation Utilities
+
+**File:** `lib/workflow/compute.ts`
+
+Pure functions for computing derived state from raw data:
+
+| Function | Input | Output |
+|----------|-------|--------|
+| `computeDemandFromGroups()` | Groups with extractions | `ComputedDemandItem[]` |
+| `computeOrderItems()` | Demand + Stations | `{ computed, skipped }` |
+| `computeCoverage()` | Demand + Stations | `CoverageInfo` |
+| `computeExtractionStats()` | Groups | `ExtractionStats` |
+
+**Key behavior:** Gracefully filters invalid data:
+- Groups without extraction → skipped
+- Groups with error status → skipped
+- Line items without primaryCode → skipped
+- Stations without valid status → skipped (returned in `skippedItems`)
+
+### Hook Changes
+
+**Removed:**
+- `useApproveDemand()` - No approval step
+- `useUpdateSessionStatus()` - Renamed
+
+**Added/Changed:**
+- `useUpdatePhase()` - Updates `lastPhase` (fire-and-forget on navigation)
+- `useDemand()` - Simplified, returns computed data with stats
+- `useOrder()` - Returns `orderItems`, `skippedItems`, `coverage`
+
+### UI Navigation Refactoring
+
+**New Component:** `components/workflow-navigation.tsx`
+
+Shared floating bottom banner with prev/next navigation:
+
+```tsx
+<WorkflowNavigation
+  prev={{ href: "/", label: "Sessions" }}
+  next={{ href: `/sessions/${id}/demand`, label: "Demand" }}
+/>
+```
+
+**Navigation Flow:**
+
+| Page | Prev | Next |
+|------|------|------|
+| Loading Lists | Sessions (/) | Demand |
+| Demand | Loading Lists | Inventory |
+| Inventory | Demand | Order |
+| Order | Inventory | Done (/) |
+
+**Page Changes:**
+- All pages: Removed header back navigation, added `pb-24` for banner clearance
+- Loading Lists: Removed floating banner from `group-list-client.tsx` (moved to page level)
+- Demand: Removed approve button, approved badge, all approval conditional logic
+- Inventory: Removed coverage blocking (coverage is informational only)
+- Order: Shows `skippedItems` warning for products without valid stations
+
+### Session Router Changes
+
+**File:** `app/sessions/[id]/page.tsx`
+
+```typescript
+const phaseToRoute: Record<Session["lastPhase"], string> = {
+  "loading-lists": "loading-lists",
+  demand: "demand",
+  inventory: "inventory",
+  order: "order",
+};
+```
+
+Uses `session.lastPhase` to redirect to appropriate page on resume.
+
+### Files Modified
+
+| File | Change |
+|------|--------|
+| `lib/workflow/compute.ts` | **Created** - Pure computation functions |
+| `lib/db/schema.ts` | Removed demandSnapshots, changed status→lastPhase |
+| `app/api/[...route]/_sessions.ts` | Changed status→phase endpoint |
+| `app/api/[...route]/_demand.ts` | Removed approve, always compute |
+| `app/api/[...route]/_order.ts` | Compute from raw data, return skipped |
+| `hooks/demand/use-demand.ts` | Removed useApproveDemand |
+| `hooks/sessions/use-sessions.ts` | Changed to useUpdatePhase |
+| `hooks/order/types.ts` | Added SkippedOrderItem, CoverageInfo |
+| `components/workflow-navigation.tsx` | **Created** - Shared nav component |
+| `app/page.tsx` | Uses lastPhase |
+| `app/sessions/[id]/page.tsx` | Uses lastPhase for routing |
+| `app/sessions/[id]/loading-lists/page.tsx` | WorkflowNavigation |
+| `app/sessions/[id]/loading-lists/_components/group-list-client.tsx` | Removed floating banner |
+| `app/sessions/[id]/demand/page.tsx` | Removed approve logic, WorkflowNavigation |
+| `app/sessions/[id]/inventory/page.tsx` | Removed blocking, WorkflowNavigation |
+| `app/sessions/[id]/order/page.tsx` | Shows skipped items, WorkflowNavigation |
+| `scripts/seed-stations.ts` | Uses computed demand instead of snapshot |
+| `drizzle/0001_session_flow_refactor.sql` | **Created** - Migration |
+
+### To Apply Migration
+
+```bash
+# Option 1: Push schema directly (development)
+npm run db:push
+
+# Option 2: Run migration (production)
+npm run db:migrate
+```
+
+---
