@@ -69,8 +69,27 @@ export function useCreatePendingGroup() {
 }
 
 /**
+ * Helper to get image dimensions from a File
+ */
+async function getImageDimensions(file: File): Promise<{ width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(img.src);
+      resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(img.src);
+      reject(new Error("Failed to load image"));
+    };
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+/**
  * Phase 2: Upload images to an existing group (can run in background)
  * Updates group status from "uploading" to "pending" when complete
+ * Uses FormData for efficient file upload (avoids base64 bloat)
  */
 export function useUploadGroupImages() {
   const queryClient = useQueryClient();
@@ -83,18 +102,25 @@ export function useUploadGroupImages() {
     }: {
       groupId: string;
       sessionId: string;
-      images: Array<{
-        name: string;
-        type: string;
-        base64: string;
-        width: number;
-        height: number;
-      }>;
+      images: File[];
     }) => {
-      const res = await client.api.groups[":groupId"]["upload-images"].$post({
-        param: { groupId },
-        json: { images },
+      // Get dimensions for all images first
+      const dimensions = await Promise.all(images.map(getImageDimensions));
+
+      // Use FormData for efficient file upload
+      const formData = new FormData();
+      images.forEach((file, index) => {
+        formData.append(`image_${index}`, file);
+        formData.append(`width_${index}`, dimensions[index].width.toString());
+        formData.append(`height_${index}`, dimensions[index].height.toString());
       });
+
+      const res = await fetch(`/api/groups/${groupId}/upload-images`, {
+        method: "POST",
+        body: formData,
+        // Don't set Content-Type - browser sets it automatically with boundary
+      });
+
       if (!res.ok) {
         const error = await res.json();
         throw new Error(

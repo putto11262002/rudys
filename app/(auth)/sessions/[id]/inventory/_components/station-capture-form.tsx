@@ -10,7 +10,6 @@ import {
   useUploadStationImages,
   useExtractStation,
 } from "@/hooks/stations";
-import { fileToBase64, getImageDimensions } from "@/lib/utils/image";
 
 interface StationCaptureFormProps {
   sessionId: string;
@@ -68,40 +67,12 @@ export function StationCaptureForm({ sessionId }: StationCaptureFormProps) {
       // Capture modelId in closure - no ref needed
       void (async () => {
         try {
-          // Convert images to base64
-          const [signData, stockData] = await Promise.all([
-            Promise.all([
-              fileToBase64(signToUpload),
-              getImageDimensions(signToUpload),
-            ]),
-            Promise.all([
-              fileToBase64(stockToUpload),
-              getImageDimensions(stockToUpload),
-            ]),
-          ]);
-
-          const signImageData = {
-            name: signToUpload.name,
-            type: signToUpload.type,
-            base64: signData[0],
-            width: signData[1].width,
-            height: signData[1].height,
-          };
-
-          const stockImageData = {
-            name: stockToUpload.name,
-            type: stockToUpload.type,
-            base64: stockData[0],
-            width: stockData[1].width,
-            height: stockData[1].height,
-          };
-
-          // Upload images
+          // Upload images directly using FormData (no base64 conversion needed)
           await uploadStationImages.mutateAsync({
             stationId,
             sessionId,
-            signImage: signImageData,
-            stockImage: stockImageData,
+            signImage: signToUpload,
+            stockImage: stockToUpload,
           });
 
           // Upload complete - trigger extraction (non-streaming, simple data)

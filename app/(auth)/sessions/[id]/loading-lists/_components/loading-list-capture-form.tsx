@@ -6,7 +6,6 @@ import { toast } from "sonner";
 import { MultiImageCapture } from "@/components/ui/multi-image-capture";
 import { AiActionButton } from "@/components/ai/ai-action-button";
 import { useCreatePendingGroup, useUploadGroupImages } from "@/hooks/groups";
-import { fileToBase64, getImageDimensions } from "@/lib/utils/image";
 
 interface LoadingListCaptureFormProps {
   sessionId: string;
@@ -62,28 +61,11 @@ export function LoadingListCaptureForm({
       // Capture modelId in closure - no ref needed
       void (async () => {
         try {
-          // Convert images to base64
-          const imageData = await Promise.all(
-            imagesToUpload.map(async (file) => {
-              const [base64, dimensions] = await Promise.all([
-                fileToBase64(file),
-                getImageDimensions(file),
-              ]);
-              return {
-                name: file.name,
-                type: file.type,
-                base64,
-                width: dimensions.width,
-                height: dimensions.height,
-              };
-            })
-          );
-
-          // Upload images
+          // Upload images directly using FormData (no base64 conversion needed)
           await uploadGroupImages.mutateAsync({
             groupId,
             sessionId,
-            images: imageData,
+            images: imagesToUpload,
           });
 
           // Upload complete - trigger extraction via parent (streaming)

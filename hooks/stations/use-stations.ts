@@ -91,6 +91,7 @@ export function useCreatePendingStation() {
 /**
  * Phase 2: Upload images to an existing station (can run in background)
  * Updates station status from "uploading" to "pending" when complete
+ * Uses FormData for efficient file upload (avoids base64 bloat)
  */
 export function useUploadStationImages() {
   const queryClient = useQueryClient();
@@ -104,25 +105,20 @@ export function useUploadStationImages() {
     }: {
       stationId: string;
       sessionId: string;
-      signImage: {
-        name: string;
-        type: string;
-        base64: string;
-        width: number;
-        height: number;
-      };
-      stockImage: {
-        name: string;
-        type: string;
-        base64: string;
-        width: number;
-        height: number;
-      };
+      signImage: File;
+      stockImage: File;
     }) => {
-      const res = await client.api.stations[":stationId"]["upload-images"].$post({
-        param: { stationId },
-        json: { signImage, stockImage },
+      // Use FormData for efficient file upload
+      const formData = new FormData();
+      formData.append("signImage", signImage);
+      formData.append("stockImage", stockImage);
+
+      const res = await fetch(`/api/stations/${stationId}/upload-images`, {
+        method: "POST",
+        body: formData,
+        // Don't set Content-Type - browser sets it automatically with boundary
       });
+
       if (!res.ok) {
         const error = await res.json();
         throw new Error(
