@@ -135,16 +135,14 @@ export async function POST(request: Request) {
         { role: "system", content: LOADING_LIST_SYSTEM_PROMPT },
         { role: "user", content },
       ],
-      onFinish: async ({ object, usage }) => {
-        if (!object) {
-          await db
-            .update(employeeCaptureGroups)
-            .set({ status: "needs_attention" })
-            .where(eq(employeeCaptureGroups.id, groupId));
-          return;
-        }
+    });
 
-        // Calculate cost from usage (AI SDK uses inputTokens/outputTokens)
+    // Use result.object promise for reliable persistence (not onFinish which may not complete)
+    // This runs in parallel with the streaming response
+    result.object
+      .then(async (finalObject) => {
+        // Get usage from the result after stream completes
+        const usage = await result.usage;
         const inputTokens = usage?.inputTokens;
         const outputTokens = usage?.outputTokens;
         const totalCost =
@@ -153,7 +151,7 @@ export async function POST(request: Request) {
             : undefined;
 
         // Persist extraction result with metadata
-        await saveExtractionResult(groupId, object, {
+        await saveExtractionResult(groupId, finalObject, {
           model: selectedModel,
           inputTokens,
           outputTokens,
@@ -161,13 +159,22 @@ export async function POST(request: Request) {
         });
 
         // Update group status
-        const newStatus = object.status === "error" ? "needs_attention" : "extracted";
+        const newStatus = finalObject.status === "error" ? "needs_attention" : "extracted";
         await db
           .update(employeeCaptureGroups)
           .set({ status: newStatus })
           .where(eq(employeeCaptureGroups.id, groupId));
-      },
-    });
+
+        console.log(`Extraction persisted for group ${groupId}`);
+      })
+      .catch(async (error) => {
+        // Handle validation failures or stream errors
+        console.error(`Extraction failed for group ${groupId}:`, error);
+        await db
+          .update(employeeCaptureGroups)
+          .set({ status: "needs_attention" })
+          .where(eq(employeeCaptureGroups.id, groupId));
+      });
 
     return result.toTextStreamResponse();
   } catch (error) {
