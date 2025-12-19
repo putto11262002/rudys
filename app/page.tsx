@@ -148,7 +148,7 @@ export default function HomePage() {
                   </div>
                   <div className="flex gap-2">
                     <Button asChild variant="outline" size="sm">
-                      <Link href={`/sessions/${session.id}`}>Open</Link>
+                      <Link href={`/sessions/${session.id}/${session.lastPhase}`}>Open</Link>
                     </Button>
                     <DeleteSessionButton sessionId={session.id} />
                   </div>
