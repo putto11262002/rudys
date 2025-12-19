@@ -1,8 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import dynamic from "next/dynamic";
-import { Loader2, Users } from "lucide-react";
+import { Users } from "lucide-react";
 import { toast } from "sonner";
 import {
   Empty,
@@ -11,27 +10,46 @@ import {
   EmptyTitle,
   EmptyDescription,
 } from "@/components/ui/empty";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { GroupCard } from "./group-card";
+import { LoadingListCaptureForm } from "./loading-list-capture-form";
 import { DEFAULT_MODEL_ID } from "@/components/ai/model-selector";
 import { useGroups, type GroupWithImages } from "@/hooks/groups";
 import { useStreamingExtraction } from "@/hooks/extraction";
 
-const LoadingListCaptureForm = dynamic(
-  () =>
-    import("./loading-list-capture-form").then(
-      (m) => m.LoadingListCaptureForm
-    ),
-  { ssr: false }
-);
+function GroupCardSkeleton() {
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Skeleton className="h-5 w-24" />
+            <Skeleton className="h-5 w-16 rounded-full" />
+          </div>
+          <Skeleton className="h-8 w-8 rounded-md" />
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {/* Images section skeleton */}
+        <Skeleton className="h-10 w-full rounded-lg" />
+        {/* Extracted items section skeleton */}
+        <Skeleton className="h-10 w-full rounded-lg" />
+      </CardContent>
+    </Card>
+  );
+}
 
 interface GroupListClientProps {
   sessionId: string;
   initialGroups: GroupWithImages[];
+  isLoading?: boolean;
 }
 
 export function GroupListClient({
   sessionId,
   initialGroups,
+  isLoading = false,
 }: GroupListClientProps) {
   // Track which group is currently extracting (only one at a time with streaming)
   const [extractingGroupId, setExtractingGroupId] = useState<string | null>(
@@ -80,7 +98,12 @@ export function GroupListClient({
       />
 
       {/* Groups list - newest first (already sorted by data loader) */}
-      {groups.length === 0 ? (
+      {isLoading ? (
+        <div className="space-y-4 pt-4">
+          <Skeleton className="h-5 w-28" />
+          <GroupCardSkeleton />
+        </div>
+      ) : groups.length === 0 ? (
         <div className="pt-4">
           <Empty className="border">
             <EmptyHeader>
