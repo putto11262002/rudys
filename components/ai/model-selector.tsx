@@ -41,7 +41,7 @@ export const AVAILABLE_MODELS: Model[] = [
   },
 ];
 
-export const DEFAULT_MODEL_ID = "google/gemini-2.5-flash-lite";
+export const DEFAULT_MODEL_ID = "openai/gpt-4o-mini";
 
 function ProviderIcon({ provider }: { provider: Model["provider"] }) {
   if (provider === "openai") {

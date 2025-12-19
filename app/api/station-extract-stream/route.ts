@@ -32,7 +32,7 @@ function safeParseExtraction(jsonString: string): StationExtraction | null {
 }
 
 // Default model if none specified
-const DEFAULT_MODEL = "google/gemini-2.5-flash-lite";
+const DEFAULT_MODEL = "openai/gpt-4o-mini";
 
 // Model pricing (per 1M tokens) - approximate costs
 const MODEL_PRICING: Record<string, { input: number; output: number }> = {

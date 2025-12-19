@@ -6,7 +6,7 @@ import {
 import { STATION_SYSTEM_PROMPT, STATION_USER_PROMPT } from "./prompts";
 
 // Default model if none specified
-const DEFAULT_MODEL = "openai/gpt-4.1-nano";
+const DEFAULT_MODEL = "openai/gpt-4o-mini";
 
 /**
  * Extracts station data from sign and stock images.
