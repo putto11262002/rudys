@@ -45,7 +45,134 @@ export const stationRoutes = new Hono()
       }
     },
   )
-  // Create station with sign and stock images
+  // Phase 1: Create station with "uploading" status (instant, returns ID)
+  .post(
+    "/sessions/:sessionId/stations/create-pending",
+    zValidator("param", z.object({ sessionId: z.string().uuid() })),
+    async (c) => {
+      const { sessionId } = c.req.valid("param");
+
+      try {
+        // Verify session exists
+        const session = await db.query.sessions.findFirst({
+          where: eq(sessions.id, sessionId),
+        });
+
+        if (!session) {
+          return c.json({ error: "Session not found" }, 404);
+        }
+
+        // Create station record with "uploading" status
+        const [station] = await db
+          .insert(stationCaptures)
+          .values({
+            sessionId,
+            status: "uploading",
+          })
+          .returning();
+
+        return c.json({ station }, 201);
+      } catch (error) {
+        console.error("Failed to create pending station:", error);
+        return c.json({ error: "Failed to create station" }, 500);
+      }
+    },
+  )
+  // Phase 2: Upload images to existing station (can be called in background)
+  .post(
+    "/stations/:stationId/upload-images",
+    zValidator("param", z.object({ stationId: z.string().uuid() })),
+    zValidator(
+      "json",
+      z.object({
+        signImage: z.object({
+          name: z.string(),
+          type: z.string(),
+          base64: z.string(),
+          width: z.number(),
+          height: z.number(),
+        }),
+        stockImage: z.object({
+          name: z.string(),
+          type: z.string(),
+          base64: z.string(),
+          width: z.number(),
+          height: z.number(),
+        }),
+      }),
+    ),
+    async (c) => {
+      const { stationId } = c.req.valid("param");
+      const { signImage, stockImage } = c.req.valid("json");
+
+      try {
+        // Verify station exists
+        const station = await db.query.stationCaptures.findFirst({
+          where: eq(stationCaptures.id, stationId),
+        });
+
+        if (!station) {
+          return c.json({ error: "Station not found" }, 404);
+        }
+
+        try {
+          // Upload sign image
+          const signBuffer = Buffer.from(signImage.base64, "base64");
+          const signExt = signImage.name.split(".").pop() || "jpg";
+          const signBlob = await put(
+            `sessions/${station.sessionId}/stations/${stationId}/sign.${signExt}`,
+            signBuffer,
+            { access: "public", contentType: signImage.type },
+          );
+
+          // Upload stock image
+          const stockBuffer = Buffer.from(stockImage.base64, "base64");
+          const stockExt = stockImage.name.split(".").pop() || "jpg";
+          const stockBlob = await put(
+            `sessions/${station.sessionId}/stations/${stationId}/stock.${stockExt}`,
+            stockBuffer,
+            { access: "public", contentType: stockImage.type },
+          );
+
+          // Update station with image URLs and set status to "pending"
+          const now = new Date().toISOString();
+          await db
+            .update(stationCaptures)
+            .set({
+              status: "pending",
+              signBlobUrl: signBlob.url,
+              signWidth: signImage.width,
+              signHeight: signImage.height,
+              signUploadedAt: now,
+              stockBlobUrl: stockBlob.url,
+              stockWidth: stockImage.width,
+              stockHeight: stockImage.height,
+              stockUploadedAt: now,
+            })
+            .where(eq(stationCaptures.id, stationId));
+
+          // Fetch the updated station
+          const updatedStation = await db.query.stationCaptures.findFirst({
+            where: eq(stationCaptures.id, stationId),
+          });
+
+          return c.json({ station: updatedStation });
+        } catch (uploadError) {
+          // Mark as needs_attention if upload failed
+          await db
+            .update(stationCaptures)
+            .set({ status: "needs_attention" })
+            .where(eq(stationCaptures.id, stationId));
+          console.error("Failed to upload station images:", uploadError);
+          return c.json({ error: "Failed to upload images" }, 500);
+        }
+      } catch (error) {
+        console.error("Failed to upload station images:", error);
+        return c.json({ error: "Failed to upload images" }, 500);
+      }
+    },
+  )
+  // Legacy: Create station with sign and stock images in one request
   .post(
     "/sessions/:sessionId/stations",
     zValidator("param", z.object({ sessionId: z.string().uuid() })),

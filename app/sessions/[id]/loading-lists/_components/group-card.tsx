@@ -11,7 +11,7 @@ import {
   ImageIcon,
   FileText,
   Loader2,
-  Package,
+  Upload,
 } from "lucide-react";
 import {
   Card,
@@ -21,6 +21,14 @@ import {
   CardAction,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import {
   Collapsible,
   CollapsibleContent,
@@ -55,6 +63,16 @@ function StatusBadge({
   extractionStatus?: "success" | "warning" | "error" | null;
   isExtracting?: boolean;
 }) {
+  // Uploading status (images being uploaded in background)
+  if (groupStatus === "uploading") {
+    return (
+      <Badge variant="info">
+        <Upload className="size-3 mr-1 animate-pulse" />
+        Uploading
+      </Badge>
+    );
+  }
+
   if (isExtracting) {
     return (
       <Badge variant="info">
@@ -119,7 +137,7 @@ function CollapsibleSection({
 
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
-      <CollapsibleTrigger className="flex items-center justify-between w-full py-2 px-3 rounded-lg transition-colors bg-muted/50 hover:bg-muted">
+      <CollapsibleTrigger className="flex items-center justify-between w-full py-2 border-b transition-colors hover:bg-muted/30">
         <div className="flex items-center gap-2 text-sm font-medium">
           <Icon className="size-4" />
           {title}
@@ -227,45 +245,43 @@ function ExtractionDataView({
 
       {/* Activities with their line items */}
       {allActivityCodes.size > 0 && (
-        <div className="space-y-3 max-h-64 overflow-y-auto">
+        <div className="space-y-4 max-h-64 overflow-y-auto">
           {Array.from(allActivityCodes).map((activityCode) => {
             const activityItems = itemsByActivity.get(activityCode) ?? [];
 
             return (
-              <div key={activityCode} className="space-y-1">
+              <div key={activityCode} className="space-y-2">
                 {/* Activity header */}
                 <div className="text-sm font-medium font-mono text-primary">
                   {activityCode}
                 </div>
 
-                {/* Line items for this activity */}
+                {/* Line items table */}
                 {activityItems.length > 0 ? (
-                  <div className="space-y-1 pl-3 border-l-2 border-muted">
-                    {activityItems.map((item, idx) => (
-                      <div
-                        key={idx}
-                        className={cn(
-                          "flex items-center justify-between text-xs px-2 py-1 rounded bg-muted/30",
-                          isStreaming && "animate-pulse"
-                        )}
-                      >
-                        <div className="flex items-center gap-2">
-                          <Package className="size-3 text-muted-foreground" />
-                          <span className="font-mono">{item.productCode}</span>
-                          {item.description && (
-                            <span className="text-muted-foreground truncate max-w-32">
-                              {item.description}
-                            </span>
-                          )}
-                        </div>
-                        <Badge variant="secondary" className="text-xs">
-                          {item.quantity}
-                        </Badge>
-                      </div>
-                    ))}
+                  <div className={cn(isStreaming && "animate-pulse")}>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="h-8">Code</TableHead>
+                          <TableHead className="h-8">Description</TableHead>
+                          <TableHead className="h-8 text-right">Qty</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {activityItems.map((item, idx) => (
+                          <TableRow key={idx}>
+                            <TableCell className="py-1.5 font-mono">{item.productCode}</TableCell>
+                            <TableCell className="py-1.5 text-muted-foreground max-w-32 truncate">
+                              {item.description || "—"}
+                            </TableCell>
+                            <TableCell className="py-1.5 text-right tabular-nums">{item.quantity}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
                   </div>
                 ) : (
-                  <div className="text-xs text-muted-foreground pl-3 border-l-2 border-muted py-1">
+                  <div className="text-xs text-muted-foreground py-1">
                     No items yet
                   </div>
                 )}
@@ -300,6 +316,7 @@ export function GroupCard({
   streamingResult,
   onRerunExtraction,
 }: GroupCardProps) {
+  const isUploading = group.status === "uploading";
   const isExtracted =
     group.status === "extracted" || group.status === "needs_attention";
   const hasExtractionResult = group.extraction !== null;
@@ -369,47 +386,58 @@ export function GroupCard({
             sessionId={sessionId}
             onRerunExtraction={onRerunExtraction ?? (() => {})}
             isExtracting={isExtracting}
+            isUploading={isUploading}
           />
         </CardAction>
       </CardHeader>
       <CardContent className="space-y-3">
-        {/* Images collapsible */}
-        <CollapsibleSection
-          title="Images"
-          icon={ImageIcon}
-          defaultOpen={!isExtracted && !isExtracting}
-          count={group.images.length}
-        >
-          <ImageGrid images={group.images} />
-        </CollapsibleSection>
+        {/* Uploading state - show centered message */}
+        {isUploading ? (
+          <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+            <Upload className="size-4 animate-pulse" />
+            Uploading images...
+          </div>
+        ) : (
+          <>
+            {/* Images collapsible */}
+            <CollapsibleSection
+              title="Images"
+              icon={ImageIcon}
+              defaultOpen={!isExtracted && !isExtracting}
+              count={group.images.length}
+            >
+              <ImageGrid images={group.images} />
+            </CollapsibleSection>
 
-        {/* Extracted data collapsible - always show section, content varies by state */}
-        <CollapsibleSection
-          title={isExtracting ? "Extracting..." : "Extracted Items"}
-          icon={FileText}
-          defaultOpen={isExtracted || isExtracting}
-          count={lineItemCount > 0 ? lineItemCount : undefined}
-        >
-          {/* Has extraction data or streaming */}
-          {(hasExtractionResult || isExtracting) && normalizedExtraction ? (
-            <ExtractionDataView
-              extraction={normalizedExtraction}
-              items={displayItems}
-              isStreaming={isExtracting}
-            />
-          ) : isExtracting && !normalizedExtraction ? (
-            /* Extracting state without any streaming data yet */
-            <div className="flex items-center justify-center gap-2 py-4 text-sm text-muted-foreground">
-              <Loader2 className="size-4 animate-spin" />
-              Starting extraction...
-            </div>
-          ) : (
-            /* Empty state - no extraction yet */
-            <p className="text-sm text-muted-foreground text-center py-4">
-              No extraction data
-            </p>
-          )}
-        </CollapsibleSection>
+            {/* Extracted data collapsible - always show section, content varies by state */}
+            <CollapsibleSection
+              title={isExtracting ? "Extracting..." : "Extracted Items"}
+              icon={FileText}
+              defaultOpen={isExtracted || isExtracting}
+              count={lineItemCount > 0 ? lineItemCount : undefined}
+            >
+              {/* Has extraction data or streaming */}
+              {(hasExtractionResult || isExtracting) && normalizedExtraction ? (
+                <ExtractionDataView
+                  extraction={normalizedExtraction}
+                  items={displayItems}
+                  isStreaming={isExtracting}
+                />
+              ) : isExtracting && !normalizedExtraction ? (
+                /* Extracting state without any streaming data yet */
+                <div className="flex items-center justify-center gap-2 py-4 text-sm text-muted-foreground">
+                  <Loader2 className="size-4 animate-spin" />
+                  Starting extraction...
+                </div>
+              ) : (
+                /* Empty state - no extraction yet */
+                <p className="text-sm text-muted-foreground text-center py-4">
+                  No extraction data
+                </p>
+              )}
+            </CollapsibleSection>
+          </>
+        )}
       </CardContent>
     </Card>
   );

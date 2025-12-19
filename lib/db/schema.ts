@@ -33,6 +33,7 @@ export type NewSession = typeof sessions.$inferInsert;
 
 // Employee capture group status enum
 export const employeeCaptureGroupStatus = [
+  "uploading",
   "pending",
   "extracted",
   "needs_attention",
@@ -245,6 +246,7 @@ export const loadingListItemsRelations = relations(
 
 // Station capture status enum
 export const stationCaptureStatus = [
+  "uploading",
   "pending",
   "valid",
   "needs_attention",

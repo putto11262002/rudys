@@ -82,6 +82,158 @@ export const groupRoutes = new Hono()
       }
     }
   )
+  // Phase 1: Create group with "uploading" status (instant, returns ID)
+  .post(
+    "/sessions/:sessionId/groups/create-pending",
+    zValidator("param", z.object({ sessionId: z.string().uuid() })),
+    zValidator(
+      "json",
+      z.object({
+        imageCount: z.number().min(1),
+      })
+    ),
+    async (c) => {
+      const { sessionId } = c.req.valid("param");
+      const { imageCount } = c.req.valid("json");
+
+      try {
+        // Create the group with auto-numbered label and "uploading" status
+        const existingGroups = await db.query.employeeCaptureGroups.findMany({
+          where: eq(employeeCaptureGroups.sessionId, sessionId),
+        });
+        const groupNumber = existingGroups.length + 1;
+
+        const [group] = await db
+          .insert(employeeCaptureGroups)
+          .values({
+            sessionId,
+            employeeLabel: `Employee ${groupNumber}`,
+            status: "uploading",
+          })
+          .returning();
+
+        return c.json(
+          {
+            group,
+            expectedImages: imageCount,
+          },
+          201
+        );
+      } catch (error) {
+        console.error("Failed to create pending group:", error);
+        return c.json({ error: "Failed to create group" }, 500);
+      }
+    }
+  )
+  // Phase 2: Upload images to existing group (can be called in background)
+  .post(
+    "/groups/:groupId/upload-images",
+    zValidator("param", z.object({ groupId: z.string().uuid() })),
+    zValidator(
+      "json",
+      z.object({
+        images: z.array(
+          z.object({
+            name: z.string(),
+            type: z.string(),
+            base64: z.string(),
+            width: z.number(),
+            height: z.number(),
+          })
+        ),
+      })
+    ),
+    async (c) => {
+      const { groupId } = c.req.valid("param");
+      const { images } = c.req.valid("json");
+
+      if (images.length === 0) {
+        return c.json({ error: "No images provided" }, 400);
+      }
+
+      try {
+        // Verify group exists and is in "uploading" status
+        const group = await db.query.employeeCaptureGroups.findFirst({
+          where: eq(employeeCaptureGroups.id, groupId),
+        });
+
+        if (!group) {
+          return c.json({ error: "Group not found" }, 404);
+        }
+
+        // Upload all images in parallel
+        const uploadResults = await Promise.all(
+          images.map(async (img, index) => {
+            try {
+              const buffer = Buffer.from(img.base64, "base64");
+              const ext = img.name.split(".").pop() || "jpg";
+
+              const blob = await put(
+                `sessions/${group.sessionId}/loading-lists/${groupId}/${crypto.randomUUID()}.${ext}`,
+                buffer,
+                { access: "public", contentType: img.type }
+              );
+
+              await db.insert(loadingListImages).values({
+                groupId,
+                blobUrl: blob.url,
+                captureType: "uploaded_file",
+                orderIndex: index,
+                width: img.width,
+                height: img.height,
+                uploadValidationPassed: true,
+              });
+
+              return { ok: true };
+            } catch (error) {
+              console.error(`Failed to upload image ${index}:`, error);
+              return { ok: false };
+            }
+          })
+        );
+
+        const failCount = uploadResults.filter((r) => !r.ok).length;
+        const successCount = images.length - failCount;
+
+        if (successCount === 0) {
+          // All uploads failed - mark as needs_attention
+          await db
+            .update(employeeCaptureGroups)
+            .set({ status: "needs_attention" })
+            .where(eq(employeeCaptureGroups.id, groupId));
+          return c.json({ error: "All image uploads failed" }, 500);
+        }
+
+        // Update status to "pending" (ready for extraction)
+        await db
+          .update(employeeCaptureGroups)
+          .set({ status: "pending" })
+          .where(eq(employeeCaptureGroups.id, groupId));
+
+        // Fetch the updated group with images
+        const updatedGroup = await db.query.employeeCaptureGroups.findFirst({
+          where: eq(employeeCaptureGroups.id, groupId),
+          with: {
+            images: {
+              orderBy: [asc(loadingListImages.orderIndex)],
+            },
+            extraction: true,
+            items: true,
+          },
+        });
+
+        return c.json({
+          group: updatedGroup,
+          uploadedCount: successCount,
+          failedCount: failCount,
+        });
+      } catch (error) {
+        console.error("Failed to upload images:", error);
+        return c.json({ error: "Failed to upload images" }, 500);
+      }
+    }
+  )
+  // Legacy: Create group with images in one request (kept for backwards compatibility)
   .post(
     "/sessions/:sessionId/groups",
     zValidator("param", z.object({ sessionId: z.string().uuid() })),
@@ -100,7 +252,7 @@ export const groupRoutes = new Hono()
       })
     ),
     async (c) => {
-      // Create group with images
+      // Create group with images (legacy single-request flow)
       const { sessionId } = c.req.valid("param");
       const { images } = c.req.valid("json");
 

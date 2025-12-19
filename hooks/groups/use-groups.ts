@@ -32,6 +32,90 @@ export function useGroups(sessionId: string) {
 // Mutations
 // ============================================================================
 
+/**
+ * Phase 1: Create a pending group with "uploading" status (instant)
+ * Returns immediately with groupId, form can clear and user can add next item
+ */
+export function useCreatePendingGroup() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      sessionId,
+      imageCount,
+    }: {
+      sessionId: string;
+      imageCount: number;
+    }) => {
+      const res = await client.api.sessions[":sessionId"].groups["create-pending"].$post({
+        param: { sessionId },
+        json: { imageCount },
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(
+          "error" in error ? error.error : "Failed to create group"
+        );
+      }
+      return res.json();
+    },
+    onSuccess: (_data, { sessionId }) => {
+      // Invalidate to show the new "uploading" group in the list
+      queryClient.invalidateQueries({
+        queryKey: groupKeys.listBySession(sessionId),
+      });
+    },
+  });
+}
+
+/**
+ * Phase 2: Upload images to an existing group (can run in background)
+ * Updates group status from "uploading" to "pending" when complete
+ */
+export function useUploadGroupImages() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      groupId,
+      sessionId,
+      images,
+    }: {
+      groupId: string;
+      sessionId: string;
+      images: Array<{
+        name: string;
+        type: string;
+        base64: string;
+        width: number;
+        height: number;
+      }>;
+    }) => {
+      const res = await client.api.groups[":groupId"]["upload-images"].$post({
+        param: { groupId },
+        json: { images },
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(
+          "error" in error ? error.error : "Failed to upload images"
+        );
+      }
+      return res.json();
+    },
+    onSuccess: (_data, { sessionId }) => {
+      // Invalidate to update the group's status and images
+      queryClient.invalidateQueries({
+        queryKey: groupKeys.listBySession(sessionId),
+      });
+    },
+  });
+}
+
+/**
+ * Legacy: Create group with images in one request (blocks until upload complete)
+ * @deprecated Use useCreatePendingGroup + useUploadGroupImages for better UX
+ */
 export function useCreateGroupWithImages() {
   const queryClient = useQueryClient();
 

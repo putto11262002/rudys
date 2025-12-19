@@ -32,6 +32,7 @@ interface GroupActionsMenuProps {
   sessionId: string;
   onRerunExtraction: () => void;
   isExtracting?: boolean;
+  isUploading?: boolean;
 }
 
 export function GroupActionsMenu({
@@ -39,6 +40,7 @@ export function GroupActionsMenu({
   sessionId,
   onRerunExtraction,
   isExtracting = false,
+  isUploading = false,
 }: GroupActionsMenuProps) {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const deleteGroup = useDeleteGroup();
@@ -70,7 +72,7 @@ export function GroupActionsMenu({
           variant="ghost"
           size="sm"
           onClick={handleRerun}
-          disabled={isExtracting}
+          disabled={isExtracting || isUploading}
           title="Re-run extraction"
         >
           <RefreshCw className={`size-4 ${isExtracting ? "animate-spin" : ""}`} />
@@ -79,7 +81,7 @@ export function GroupActionsMenu({
           variant="ghost"
           size="sm"
           onClick={() => setDeleteDialogOpen(true)}
-          disabled={deleteGroup.isPending}
+          disabled={deleteGroup.isPending || isUploading}
           title="Delete group"
         >
           <Trash2 className="size-4" />
@@ -90,14 +92,14 @@ export function GroupActionsMenu({
       <div className="sm:hidden">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="sm">
+            <Button variant="ghost" size="sm" disabled={isUploading}>
               <MoreVertical className="size-4" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuItem
               onClick={handleRerun}
-              disabled={isExtracting}
+              disabled={isExtracting || isUploading}
               className="justify-center"
             >
               <RefreshCw className={`size-4 ${isExtracting ? "animate-spin" : ""}`} />

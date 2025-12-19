@@ -5,23 +5,27 @@ import { Upload } from "lucide-react";
 import { toast } from "sonner";
 import { MultiImageCapture } from "@/components/ui/multi-image-capture";
 import { AiActionButton } from "@/components/ai/ai-action-button";
-import { useCreateGroupWithImages } from "@/hooks/groups";
+import { useCreatePendingGroup, useUploadGroupImages } from "@/hooks/groups";
 import { fileToBase64, getImageDimensions } from "@/lib/utils/image";
 
 interface LoadingListCaptureFormProps {
   sessionId: string;
-  /** Called when upload completes, provides groupId for extraction */
-  onStarted: (groupId: string, modelId: string) => void;
+  /**
+   * Called when upload completes and group is ready for extraction.
+   * Uses streaming extraction in parent for real-time UI updates.
+   */
+  onUploadComplete: (groupId: string, modelId: string) => void;
 }
 
 export function LoadingListCaptureForm({
   sessionId,
-  onStarted,
+  onUploadComplete,
 }: LoadingListCaptureFormProps) {
   const [images, setImages] = useState<File[]>([]);
-  const [isUploading, setIsUploading] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
 
-  const createGroupWithImages = useCreateGroupWithImages();
+  const createPendingGroup = useCreatePendingGroup();
+  const uploadGroupImages = useUploadGroupImages();
 
   const handleSubmit = async (modelId: string) => {
     if (images.length === 0) {
@@ -29,70 +33,86 @@ export function LoadingListCaptureForm({
       return;
     }
 
-    setIsUploading(true);
+    setIsCreating(true);
 
     try {
-      // Convert images to base64 with dimensions for API
-      const imageData = await Promise.all(
-        images.map(async (file) => {
-          const [base64, dimensions] = await Promise.all([
-            fileToBase64(file),
-            getImageDimensions(file),
-          ]);
-          return {
-            name: file.name,
-            type: file.type,
-            base64,
-            width: dimensions.width,
-            height: dimensions.height,
-          };
-        })
-      );
+      // Phase 1: Create group instantly (returns immediately)
+      const result = await createPendingGroup.mutateAsync({
+        sessionId,
+        imageCount: images.length,
+      });
 
-      // Use mutation with callbacks for UI concerns
-      createGroupWithImages.mutate(
-        { sessionId, images: imageData },
-        {
-          onSuccess: (data) => {
-            const groupId = data.group?.id;
-            if (!groupId) {
-              toast.error("Failed to create group");
-              setIsUploading(false);
-              return;
-            }
+      const groupId = result.group?.id;
+      if (!groupId) {
+        toast.error("Failed to create group");
+        setIsCreating(false);
+        return;
+      }
 
-            // Clear form immediately - ready for next capture
-            setImages([]);
-            setIsUploading(false);
+      // Store images for background upload
+      const imagesToUpload = [...images];
 
-            // Notify parent - extraction will be handled by parent
-            onStarted(groupId, modelId);
-          },
-          onError: (error) => {
-            toast.error(error.message);
-            setIsUploading(false);
-          },
+      // Clear form immediately - ready for next capture
+      setImages([]);
+      setIsCreating(false);
+
+      toast.success("Group created, uploading images...");
+
+      // Phase 2: Upload images in background (non-blocking)
+      // Capture modelId in closure - no ref needed
+      void (async () => {
+        try {
+          // Convert images to base64
+          const imageData = await Promise.all(
+            imagesToUpload.map(async (file) => {
+              const [base64, dimensions] = await Promise.all([
+                fileToBase64(file),
+                getImageDimensions(file),
+              ]);
+              return {
+                name: file.name,
+                type: file.type,
+                base64,
+                width: dimensions.width,
+                height: dimensions.height,
+              };
+            })
+          );
+
+          // Upload images
+          await uploadGroupImages.mutateAsync({
+            groupId,
+            sessionId,
+            images: imageData,
+          });
+
+          // Upload complete - trigger extraction via parent (streaming)
+          onUploadComplete(groupId, modelId);
+        } catch (error) {
+          toast.error(
+            `Upload failed: ${error instanceof Error ? error.message : "Unknown error"}`
+          );
         }
-      );
+      })();
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to process images"
+        error instanceof Error ? error.message : "Failed to create group"
       );
-      setIsUploading(false);
+      setIsCreating(false);
     }
   };
 
-  const isProcessing = isUploading || createGroupWithImages.isPending;
+  const isProcessing = isCreating || createPendingGroup.isPending;
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-start sm:justify-end">
+      <div className="flex justify-start">
         <AiActionButton
           onAction={handleSubmit}
           disabled={isProcessing || images.length === 0}
           isLoading={isProcessing}
           label="Confirm & Extract"
-          loadingLabel="Uploading..."
+          loadingLabel="Creating..."
           icon={<Upload className="size-4" />}
         />
       </div>

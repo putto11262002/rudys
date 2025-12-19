@@ -11,6 +11,7 @@ import {
   Trash2,
   XCircle,
   RefreshCw,
+  Upload,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -87,6 +88,13 @@ export function StationCard({ station, sessionId }: StationCardProps) {
 
   const getStatusBadge = () => {
     switch (station.status) {
+      case "uploading":
+        return (
+          <Badge variant="info">
+            <Upload className="size-3 mr-1 animate-pulse" />
+            Uploading
+          </Badge>
+        );
       case "valid":
         return (
           <Badge variant="success">
@@ -120,6 +128,7 @@ export function StationCard({ station, sessionId }: StationCardProps) {
     }
   };
 
+  const isUploading = station.status === "uploading";
   const isProcessing = deleteStation.isPending || extractStation.isPending;
 
   return (
@@ -130,7 +139,7 @@ export function StationCard({ station, sessionId }: StationCardProps) {
             <CardTitle className="flex items-center gap-2 text-lg ">
               {getStatusBadge()}
               <span className="font-mono">
-                {station.productCode || "Unknown Product"}
+                {station.productCode || (isUploading ? "Uploading..." : "Unknown Product")}
               </span>
             </CardTitle>
           </div>
@@ -140,7 +149,7 @@ export function StationCard({ station, sessionId }: StationCardProps) {
               size="icon"
               onClick={handleReExtract}
               disabled={
-                isProcessing || !station.signBlobUrl || !station.stockBlobUrl
+                isProcessing || isUploading || !station.signBlobUrl || !station.stockBlobUrl
               }
               title="Re-extract"
             >
@@ -152,7 +161,7 @@ export function StationCard({ station, sessionId }: StationCardProps) {
             </Button>
             <AlertDialog>
               <AlertDialogTrigger asChild>
-                <Button variant="ghost" size="icon" disabled={isProcessing}>
+                <Button variant="ghost" size="icon" disabled={isProcessing || isUploading}>
                   {deleteStation.isPending ? (
                     <Loader2 className="size-4 animate-spin" />
                   ) : (
@@ -183,96 +192,106 @@ export function StationCard({ station, sessionId }: StationCardProps) {
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
-        {/* Error Alert for Failed Status */}
-        {station.status === "failed" && station.errorMessage && (
-          <Alert variant="destructive">
-            <XCircle className="size-4" />
-            <AlertTitle>Extraction Failed</AlertTitle>
-            <AlertDescription>{station.errorMessage}</AlertDescription>
-          </Alert>
-        )}
-
-        {/* Extracted Data Summary */}
-        {station.extractedAt && station.status !== "failed" && (
-          <div className="grid grid-cols-3 gap-4 text-center">
-            <div>
-              <div className="text-2xl font-bold">
-                {station.onHandQty ?? "—"}
-              </div>
-              <div className="text-xs text-muted-foreground">On Hand</div>
-            </div>
-            <div>
-              <div className="text-2xl font-bold">{station.minQty ?? "—"}</div>
-              <div className="text-xs text-muted-foreground">Min</div>
-            </div>
-            <div>
-              <div className="text-2xl font-bold">{station.maxQty ?? "—"}</div>
-              <div className="text-xs text-muted-foreground">Max</div>
-            </div>
+        {/* Uploading state */}
+        {isUploading ? (
+          <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+            <Upload className="size-4 animate-pulse" />
+            Uploading images...
           </div>
-        )}
+        ) : (
+          <>
+            {/* Error Alert for Failed Status */}
+            {station.status === "failed" && station.errorMessage && (
+              <Alert variant="destructive">
+                <XCircle className="size-4" />
+                <AlertTitle>Extraction Failed</AlertTitle>
+                <AlertDescription>{station.errorMessage}</AlertDescription>
+              </Alert>
+            )}
 
-        {/* Warning message for needs_attention status */}
-        {station.status === "needs_attention" && station.errorMessage && (
-          <Alert>
-            <AlertTriangle className="size-4" />
-            <AlertTitle>Warning</AlertTitle>
-            <AlertDescription>{station.errorMessage}</AlertDescription>
-          </Alert>
-        )}
+            {/* Extracted Data Summary */}
+            {station.extractedAt && station.status !== "failed" && (
+              <div className="grid grid-cols-3 gap-4 text-center">
+                <div>
+                  <div className="text-2xl font-bold">
+                    {station.onHandQty ?? "—"}
+                  </div>
+                  <div className="text-xs text-muted-foreground">On Hand</div>
+                </div>
+                <div>
+                  <div className="text-2xl font-bold">{station.minQty ?? "—"}</div>
+                  <div className="text-xs text-muted-foreground">Min</div>
+                </div>
+                <div>
+                  <div className="text-2xl font-bold">{station.maxQty ?? "—"}</div>
+                  <div className="text-xs text-muted-foreground">Max</div>
+                </div>
+              </div>
+            )}
 
-        {/* Collapsible Image Preview */}
-        <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
-          <CollapsibleTrigger asChild>
-            <Button variant="ghost" size="sm" className="w-full">
-              {isExpanded ? (
-                <>
-                  <ChevronUp className="size-4 mr-2" />
-                  Hide Images
-                </>
-              ) : (
-                <>
-                  <ChevronDown className="size-4 mr-2" />
-                  Show Images
-                </>
-              )}
-            </Button>
-          </CollapsibleTrigger>
-          <CollapsibleContent className="pt-2">
-            <div className="grid grid-cols-2 gap-2">
-              {station.signBlobUrl && (
-                <div className="space-y-1">
-                  <p className="text-xs font-medium text-muted-foreground">
-                    Sign
-                  </p>
-                  <div className="relative aspect-[3/4] bg-muted rounded-lg overflow-hidden">
-                    <Image
-                      src={station.signBlobUrl}
-                      alt="Station sign"
-                      fill
-                      className="object-cover"
-                    />
-                  </div>
+            {/* Warning message for needs_attention status */}
+            {station.status === "needs_attention" && station.errorMessage && (
+              <Alert>
+                <AlertTriangle className="size-4" />
+                <AlertTitle>Warning</AlertTitle>
+                <AlertDescription>{station.errorMessage}</AlertDescription>
+              </Alert>
+            )}
+
+            {/* Collapsible Image Preview */}
+            <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
+              <CollapsibleTrigger asChild>
+                <Button variant="ghost" size="sm" className="w-full">
+                  {isExpanded ? (
+                    <>
+                      <ChevronUp className="size-4 mr-2" />
+                      Hide Images
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown className="size-4 mr-2" />
+                      Show Images
+                    </>
+                  )}
+                </Button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="pt-2">
+                <div className="grid grid-cols-2 gap-2">
+                  {station.signBlobUrl && (
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium text-muted-foreground">
+                        Sign
+                      </p>
+                      <div className="relative aspect-[3/4] bg-muted rounded-lg overflow-hidden">
+                        <Image
+                          src={station.signBlobUrl}
+                          alt="Station sign"
+                          fill
+                          className="object-cover"
+                        />
+                      </div>
+                    </div>
+                  )}
+                  {station.stockBlobUrl && (
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium text-muted-foreground">
+                        Stock
+                      </p>
+                      <div className="relative aspect-[3/4] bg-muted rounded-lg overflow-hidden">
+                        <Image
+                          src={station.stockBlobUrl}
+                          alt="Station stock"
+                          fill
+                          className="object-cover"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
-              {station.stockBlobUrl && (
-                <div className="space-y-1">
-                  <p className="text-xs font-medium text-muted-foreground">
-                    Stock
-                  </p>
-                  <div className="relative aspect-[3/4] bg-muted rounded-lg overflow-hidden">
-                    <Image
-                      src={station.stockBlobUrl}
-                      alt="Station stock"
-                      fill
-                      className="object-cover"
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-          </CollapsibleContent>
-        </Collapsible>
+              </CollapsibleContent>
+            </Collapsible>
+          </>
+        )}
       </CardContent>
     </Card>
   );

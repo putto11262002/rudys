@@ -79,8 +79,8 @@ export function GroupListClient({
   const { data: groupsData } = useGroups(sessionId);
   const groups = groupsData?.groups ?? initialGroups;
 
-  const handleStarted = (groupId: string, modelId: string) => {
-    // Mark this group as extracting and start streaming
+  const handleUploadComplete = (groupId: string, modelId: string) => {
+    // Upload finished - start streaming extraction
     setExtractingGroupId(groupId);
     extract(groupId, modelId);
   };
@@ -90,7 +90,7 @@ export function GroupListClient({
       {/* Capture form - always visible at the top */}
       <LoadingListCaptureForm
         sessionId={sessionId}
-        onStarted={handleStarted}
+        onUploadComplete={handleUploadComplete}
       />
 
       {/* Groups list - newest first (already sorted by data loader) */}
