@@ -150,7 +150,7 @@ export function StationCaptureForm({ sessionId }: StationCaptureFormProps) {
   return (
     <div className="space-y-4">
       {/* Upload button with model selector */}
-      <div className="flex justify-start sm:justify-end">
+      <div className="flex justify-start">
         <AiActionButton
           onAction={handleSubmit}
           disabled={isProcessing || !signImage || !stockImage}

@@ -106,7 +106,7 @@ export function LoadingListCaptureForm({
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-start sm:justify-end">
+      <div className="flex justify-start">
         <AiActionButton
           onAction={handleSubmit}
           disabled={isProcessing || images.length === 0}
