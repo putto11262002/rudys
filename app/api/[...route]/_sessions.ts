@@ -2,14 +2,9 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import {
-  sessions,
-  sessionPhase,
-  employeeCaptureGroups,
-  loadingListImages,
-} from "@/lib/db/schema";
+import { sessions, sessionPhase } from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
-import { del } from "@vercel/blob";
+import { deleteSessionWithCleanup } from "@/lib/cleanup/session";
 
 // Define routes with CHAINING (critical for type inference)
 export const sessionRoutes = new Hono()
@@ -64,47 +59,21 @@ export const sessionRoutes = new Hono()
     "/:id",
     zValidator("param", z.object({ id: z.string().uuid() })),
     async (c) => {
-      // Delete session + cleanup blobs
+      // Delete session + cleanup blobs (including station captures)
       const { id } = c.req.valid("param");
 
       try {
-        // Get all groups for this session
-        const groups = await db.query.employeeCaptureGroups.findMany({
-          where: eq(employeeCaptureGroups.sessionId, id),
-        });
+        const result = await deleteSessionWithCleanup(id);
 
-        // Get all images for all groups
-        const allImages = await Promise.all(
-          groups.map((group) =>
-            db.query.loadingListImages.findMany({
-              where: eq(loadingListImages.groupId, group.id),
-            })
-          )
-        );
-
-        // Delete all blobs in parallel (best-effort)
-        const blobUrls = allImages.flat().map((img) => img.blobUrl);
-        await Promise.all(
-          blobUrls.map(async (url) => {
-            try {
-              await del(url);
-            } catch {
-              console.error(`Failed to delete blob: ${url}`);
-            }
-          })
-        );
-
-        // Delete the session (cascade deletes groups and images via FK)
-        const [deleted] = await db
-          .delete(sessions)
-          .where(eq(sessions.id, id))
-          .returning({ id: sessions.id });
-
-        if (!deleted) {
+        if (!result.success) {
           return c.json({ error: "Session not found" }, 404);
         }
 
-        return c.json({ success: true });
+        return c.json({
+          success: true,
+          deletedBlobs: result.deletedBlobs,
+          failedBlobs: result.failedBlobs,
+        });
       } catch (error) {
         console.error("Failed to delete session:", error);
         return c.json({ error: "Failed to delete session" }, 500);
