@@ -17,7 +17,7 @@ import {
 export const maxDuration = 60;
 
 // Default model if none specified
-const DEFAULT_MODEL = "openai/gpt-4.1-nano";
+const DEFAULT_MODEL = "google/gemini-2.5-flash-lite";
 
 // Model pricing (per 1M tokens) - approximate costs
 const MODEL_PRICING: Record<string, { input: number; output: number }> = {

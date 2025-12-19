@@ -37,8 +37,6 @@ export function GroupListClient({
   const [extractingGroupId, setExtractingGroupId] = useState<string | null>(
     null
   );
-  // Track selected model for re-run extraction
-  const [lastUsedModel, setLastUsedModel] = useState(DEFAULT_MODEL_ID);
 
   // Streaming extraction - lifted to parent so GroupCard can show partial results
   const {
@@ -66,8 +64,6 @@ export function GroupListClient({
   const handleStarted = (groupId: string, modelId: string) => {
     // Mark this group as extracting and start streaming
     setExtractingGroupId(groupId);
-    setLastUsedModel(modelId);
-    // Start extraction with selected model
     extract(groupId, modelId);
   };
 
@@ -112,7 +108,9 @@ export function GroupListClient({
                 // Don't allow if already extracting another group
                 if (extractingGroupId !== null) return;
                 setExtractingGroupId(group.id);
-                extract(group.id, lastUsedModel);
+                // Use same model as previous extraction, or fallback to default
+                const modelToUse = group.extractionResult?.model ?? DEFAULT_MODEL_ID;
+                extract(group.id, modelToUse);
               }}
             />
           ))}
