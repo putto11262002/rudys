@@ -8,6 +8,7 @@ import {
   type StationExtraction,
 } from "@/lib/ai/schemas/station-extraction";
 import { stationKeys } from "./query-keys";
+import { orderKeys } from "../order/query-keys";
 
 interface UseStreamingStationExtractionOptions {
   sessionId: string;
@@ -110,6 +111,11 @@ export function useStreamingStationExtraction({
         // Coverage depends on server-side computation, so we need to refetch
         queryClient.invalidateQueries({
           queryKey: stationKeys.coverage(sessionId),
+        });
+
+        // Invalidate order since it depends on stations
+        queryClient.invalidateQueries({
+          queryKey: orderKeys.bySession(sessionId),
         });
       }
 

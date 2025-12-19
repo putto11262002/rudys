@@ -8,6 +8,8 @@ import {
   type LoadingListExtraction,
 } from "@/lib/ai/schemas/loading-list-extraction";
 import { groupKeys } from "../groups";
+import { demandKeys } from "../demand/query-keys";
+import { orderKeys } from "../order/query-keys";
 
 interface UseStreamingExtractionOptions {
   sessionId: string;
@@ -129,6 +131,14 @@ export function useStreamingExtraction({
             };
           }
         );
+
+        // Invalidate demand and order since extraction affects them
+        queryClient.invalidateQueries({
+          queryKey: demandKeys.bySession(sessionId),
+        });
+        queryClient.invalidateQueries({
+          queryKey: orderKeys.bySession(sessionId),
+        });
       }
 
       hasCompletedRef.current = true;
