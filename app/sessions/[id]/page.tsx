@@ -1,10 +1,7 @@
-"use client";
-
-import { useEffect } from "react";
-import { useRouter, notFound } from "next/navigation";
-import { use } from "react";
-import { Loader2 } from "lucide-react";
-import { useSession } from "@/hooks/sessions";
+import { redirect, notFound } from "next/navigation";
+import { db } from "@/lib/db";
+import { sessions } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import type { Session } from "@/lib/db/schema";
 
 // Map lastPhase to route
@@ -19,34 +16,17 @@ interface SessionPageProps {
   params: Promise<{ id: string }>;
 }
 
-export default function SessionPage({ params }: SessionPageProps) {
-  const { id } = use(params);
-  const router = useRouter();
-  const { data, isLoading, error } = useSession(id);
+export default async function SessionPage({ params }: SessionPageProps) {
+  const { id } = await params;
 
-  useEffect(() => {
-    if (data?.session) {
-      const route = phaseToRoute[data.session.lastPhase] ?? "loading-lists";
-      router.replace(`/sessions/${data.session.id}/${route}`);
-    }
-  }, [data, router]);
+  const session = await db.query.sessions.findFirst({
+    where: eq(sessions.id, id),
+  });
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <Loader2 className="size-8 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
-  if (error || !data?.session) {
+  if (!session) {
     notFound();
   }
 
-  // Show loading while redirecting
-  return (
-    <div className="flex items-center justify-center min-h-screen">
-      <Loader2 className="size-8 animate-spin text-muted-foreground" />
-    </div>
-  );
+  const route = phaseToRoute[session.lastPhase] ?? "loading-lists";
+  redirect(`/sessions/${session.id}/${route}`);
 }
