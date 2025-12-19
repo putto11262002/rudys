@@ -17,12 +17,6 @@ interface StationImagePayload {
 }
 
 export async function POST(request: NextRequest) {
-  // Auth check
-  const isValid = validateSessionFromCookie(request.headers.get("cookie"));
-  if (!isValid) {
-    return new Response("Unauthorized", { status: 401 });
-  }
-
   const body = (await request.json()) as HandleUploadBody;
 
   try {
@@ -30,6 +24,13 @@ export async function POST(request: NextRequest) {
       body,
       request,
       onBeforeGenerateToken: async (pathname, clientPayload) => {
+        // Auth check - only for token generation (browser request with cookie)
+        // The webhook callback from Vercel is authenticated via the blob token
+        const isValid = validateSessionFromCookie(request.headers.get("cookie"));
+        if (!isValid) {
+          throw new Error("Unauthorized");
+        }
+
         if (!clientPayload) {
           throw new Error("clientPayload is required");
         }
