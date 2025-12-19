@@ -1,8 +1,16 @@
 "use client";
 
-import { Check, X } from "lucide-react";
+import { Check, AlertTriangle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
+import { Badge } from "@/components/ui/badge";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import type { CoverageItem, CoverageSummary } from "@/hooks/stations";
 
 interface CoverageSummaryCardProps {
@@ -18,11 +26,11 @@ export function CoverageSummaryCard({
     return (
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Coverage</CardTitle>
+          <CardTitle className="text-base">Demanded Products</CardTitle>
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            No demand items to cover. Approve demand first.
+            No demand items. Approve demand first.
           </p>
         </CardContent>
       </Card>
@@ -33,51 +41,52 @@ export function CoverageSummaryCard({
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-base flex items-center justify-between">
-          <span>Coverage</span>
+          <span>Demanded Products</span>
           <span className="text-sm font-normal text-muted-foreground">
-            {summary.coveredCount}/{summary.totalCount} products
+            {summary.coveredCount}/{summary.totalCount} captured
           </span>
         </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="space-y-2">
-          <Progress value={summary.percentage} className="h-2" />
-          <p className="text-xs text-muted-foreground text-center">
-            {summary.percentage}% coverage
-          </p>
-        </div>
-
-        {!summary.canProceed && (
-          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-            <p className="text-sm text-amber-800">
-              Add stations for all demanded products to continue to order review.
-            </p>
-          </div>
-        )}
-
-        <div className="space-y-2">
-          <p className="text-sm font-medium">Demanded Products</p>
-          <div className="space-y-1 max-h-[200px] overflow-y-auto">
+      <CardContent>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Status</TableHead>
+              <TableHead>Product</TableHead>
+              <TableHead className="text-right">On Hand</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {coverage.map((item) => (
-              <div
-                key={item.productCode}
-                className="flex items-center justify-between py-1 px-2 rounded hover:bg-muted/50"
-              >
-                <div className="flex items-center gap-2">
-                  {item.hasValidStation ? (
-                    <Check className="size-4 text-green-600" />
+              <TableRow key={item.productCode}>
+                <TableCell>
+                  {item.isCaptured ? (
+                    <Badge variant="default" className="text-xs">
+                      <Check className="size-3 mr-1" />
+                      Captured
+                    </Badge>
                   ) : (
-                    <X className="size-4 text-red-500" />
+                    <Badge variant="secondary" className="text-xs">
+                      <AlertTriangle className="size-3 mr-1" />
+                      Default
+                    </Badge>
                   )}
+                </TableCell>
+                <TableCell>
                   <span className="font-mono text-sm">{item.productCode}</span>
-                </div>
-                <span className="text-sm text-muted-foreground">
-                  qty: {item.demandQty}
-                </span>
-              </div>
+                  {item.productDescription && (
+                    <p className="text-xs text-muted-foreground truncate max-w-[200px]">
+                      {item.productDescription}
+                    </p>
+                  )}
+                </TableCell>
+                <TableCell className="text-right text-muted-foreground">
+                  {item.onHandQty}
+                </TableCell>
+              </TableRow>
             ))}
-          </div>
-        </div>
+          </TableBody>
+        </Table>
       </CardContent>
     </Card>
   );

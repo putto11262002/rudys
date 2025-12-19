@@ -1,4 +1,5 @@
 import type { StationCapture } from "@/lib/db/schema";
+import { getProduct } from "@/lib/products/catalog";
 
 // ============================================================================
 // Types
@@ -17,12 +18,14 @@ export type ComputedDemandItem = {
 
 export type ComputedOrderItem = {
   productCode: string;
+  productDescription?: string;
   demandQty: number;
   onHandQty: number;
   minQty: number | null;
   maxQty: number | null;
   recommendedOrderQty: number;
   exceedsMax: boolean;
+  isCaptured: boolean; // Derived: true if station exists with images
 };
 
 export type SkippedOrderItem = {
@@ -138,47 +141,63 @@ export function computeOrderItems(
   for (const demand of demandItems) {
     // Find station for this product
     const station = stations.find((s) => s.productCode === demand.productCode);
+    const catalogProduct = getProduct(demand.productCode);
 
-    if (!station) {
-      skipped.push({
+    // isCaptured: station exists with images
+    const isCaptured = !!(
+      station?.signBlobUrl && station?.stockBlobUrl &&
+      station.status === "valid" && station.onHandQty !== null && station.maxQty !== null
+    );
+
+    // If we have a captured station, use station data
+    if (isCaptured) {
+      const onHandQty = station.onHandQty!;
+      const maxQty = station.maxQty!;
+      const recommendedOrderQty = Math.max(0, demand.demandQty - onHandQty);
+      const exceedsMax = onHandQty + recommendedOrderQty > maxQty;
+
+      computed.push({
         productCode: demand.productCode,
+        productDescription: catalogProduct?.description,
         demandQty: demand.demandQty,
-        reason: "no_station",
+        onHandQty,
+        minQty: station.minQty,
+        maxQty,
+        recommendedOrderQty,
+        exceedsMax,
+        isCaptured: true,
       });
       continue;
     }
 
-    if (station.status !== "valid") {
-      skipped.push({
+    // Fall back to catalog if product exists there
+    if (catalogProduct) {
+      // Catalog fallback: assume onHand = 0 (pessimistic/conservative)
+      const onHandQty = 0;
+      const maxQty = catalogProduct.maxQty;
+      const minQty = catalogProduct.minQty;
+      const recommendedOrderQty = Math.max(0, demand.demandQty - onHandQty);
+      const exceedsMax = onHandQty + recommendedOrderQty > maxQty;
+
+      computed.push({
         productCode: demand.productCode,
+        productDescription: catalogProduct.description,
         demandQty: demand.demandQty,
-        reason: "station_invalid",
+        onHandQty,
+        minQty,
+        maxQty,
+        recommendedOrderQty,
+        exceedsMax,
+        isCaptured: false,
       });
       continue;
     }
 
-    if (station.onHandQty === null || station.maxQty === null) {
-      skipped.push({
-        productCode: demand.productCode,
-        demandQty: demand.demandQty,
-        reason: "missing_data",
-      });
-      continue;
-    }
-
-    const onHandQty = station.onHandQty;
-    const maxQty = station.maxQty;
-    const recommendedOrderQty = Math.max(0, demand.demandQty - onHandQty);
-    const exceedsMax = onHandQty + recommendedOrderQty > maxQty;
-
-    computed.push({
+    // Product not in catalog and no valid station - skip
+    skipped.push({
       productCode: demand.productCode,
       demandQty: demand.demandQty,
-      onHandQty,
-      minQty: station.minQty,
-      maxQty,
-      recommendedOrderQty,
-      exceedsMax,
+      reason: station ? (station.status !== "valid" ? "station_invalid" : "missing_data") : "no_station",
     });
   }
 
@@ -202,17 +221,24 @@ export function computeCoverage(
     .map((s) => s.productCode)
     .filter((p): p is string => p !== null);
 
-  const covered = demandedProducts.filter((p) =>
-    validStationProducts.includes(p)
+  // Products are covered if they have a valid station OR exist in catalog
+  const covered = demandedProducts.filter(
+    (p) => validStationProducts.includes(p) || getProduct(p) !== undefined
   );
   const missing = demandedProducts.filter(
-    (p) => !validStationProducts.includes(p)
+    (p) => !validStationProducts.includes(p) && getProduct(p) === undefined
   );
+
+  // Percentage now represents station capture coverage (not total availability)
+  const capturedCount = demandedProducts.filter((p) =>
+    validStationProducts.includes(p)
+  ).length;
   const percentage =
     demandedProducts.length > 0
-      ? Math.round((covered.length / demandedProducts.length) * 100)
+      ? Math.round((capturedCount / demandedProducts.length) * 100)
       : 100;
 
+  // isComplete means we can compute orders for all products
   return {
     covered,
     missing,

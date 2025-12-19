@@ -65,7 +65,6 @@ export default function OrderPage({ params }: OrderPageProps) {
 
   const session = data?.session;
   const orderItems = data?.orderItems ?? [];
-  const skippedItems = data?.skippedItems ?? [];
 
   // Count warnings
   const warningCount = useMemo(
@@ -147,23 +146,6 @@ export default function OrderPage({ params }: OrderPageProps) {
           }).format(new Date(session.createdAt))}
         </p>
       </div>
-
-      {/* Skipped Items Warning */}
-      {skippedItems.length > 0 && (
-        <Alert className="mb-6">
-          <AlertTriangle className="size-4" />
-          <AlertDescription>
-            {skippedItems.length} product{skippedItems.length !== 1 ? "s" : ""} skipped due to missing station data:
-            <ul className="mt-2 list-disc list-inside">
-              {skippedItems.map((item) => (
-                <li key={item.productCode} className="font-mono text-sm">
-                  {item.productCode} ({item.reason.replace(/_/g, " ")})
-                </li>
-              ))}
-            </ul>
-          </AlertDescription>
-        </Alert>
-      )}
 
       {/* Warning Banner */}
       {warningCount > 0 && (

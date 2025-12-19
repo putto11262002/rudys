@@ -7,6 +7,7 @@ import { eq, desc } from "drizzle-orm";
 import { put, del } from "@vercel/blob";
 import { safeExtractStation } from "@/lib/ai/extract-station";
 import type { StationExtraction } from "@/lib/ai/schemas/station-extraction";
+import { getProduct } from "@/lib/products/catalog";
 
 /**
  * Maps extraction status to station capture status
@@ -303,9 +304,10 @@ export const stationRoutes = new Hono()
           where: eq(stationCaptures.sessionId, sessionId),
         });
 
-        // Build coverage map
+        // Build coverage map with catalog fallbacks
         const coverage = Array.from(demandMap.entries()).map(
           ([productCode, demandQty]) => {
+            // Find station with images (isCaptured = has sign and stock images)
             const matchingStation = stations.find(
               (s) =>
                 s.productCode === productCode &&
@@ -314,20 +316,32 @@ export const stationRoutes = new Hono()
                 s.maxQty !== null,
             );
 
+            const catalogProduct = getProduct(productCode);
+            // isCaptured: station exists AND has images uploaded
+            const isCaptured = !!(
+              matchingStation?.signBlobUrl && matchingStation?.stockBlobUrl
+            );
+
             return {
               productCode,
+              productDescription: catalogProduct?.description,
               demandQty,
-              hasValidStation: !!matchingStation,
+              isCaptured,
               stationId: matchingStation?.id,
-              onHandQty: matchingStation?.onHandQty,
-              minQty: matchingStation?.minQty,
-              maxQty: matchingStation?.maxQty,
+              // If captured, use station values; otherwise default to 0
+              onHandQty: isCaptured ? (matchingStation.onHandQty ?? 0) : 0,
+              // Prefer station values, fall back to catalog
+              minQty: matchingStation?.minQty ?? catalogProduct?.minQty ?? null,
+              maxQty: matchingStation?.maxQty ?? catalogProduct?.maxQty ?? null,
             };
           },
         );
 
-        const canProceed = coverage.every((c) => c.hasValidStation);
-        const coveredCount = coverage.filter((c) => c.hasValidStation).length;
+        // Can proceed if all products have either a captured station OR exist in catalog
+        const canProceed = coverage.every(
+          (c) => c.isCaptured || (c.minQty !== null && c.maxQty !== null)
+        );
+        const coveredCount = coverage.filter((c) => c.isCaptured).length;
         const totalCount = coverage.length;
 
         return c.json({

@@ -10,12 +10,13 @@ export type StationWithDetails = StationCapture;
  */
 export type CoverageItem = {
   productCode: string;
+  productDescription?: string;
   demandQty: number;
-  hasValidStation: boolean;
+  isCaptured: boolean; // Derived: true if station exists with images
   stationId?: string;
-  onHandQty?: number | null;
-  minQty?: number | null;
-  maxQty?: number | null;
+  onHandQty: number; // 0 for uncaptured products
+  minQty: number | null;
+  maxQty: number | null;
 };
 
 /**
