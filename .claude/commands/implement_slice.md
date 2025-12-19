@@ -57,9 +57,10 @@ Important files:
 Workflow:
 1. Undestand tasks and read approapite references upstream document that the tasks refers to. 
 1.1 Read appropaite spec documents to fully understand the how the task fits into the app
+1.2 Read the checklist to understand progress and implementation notes. Divergance from the specs is documented here. If there is conflict against the spec you must prefer the checkllist version.
 1.2 Explore existing codebase to understand the current state of the app
-2. Research appropiate modules/components that will be involved for the task
-3. Research appropriate offical documentation like a senior engineer to understand the technology deeply, all caveat, advance usage. using subagent with tavily search tools if needed.
+3. Research appropiate modules/components that will be involved for the task
+4. Research appropriate offical documentation like a senior engineer to understand the technology deeply, all caveat, advance usage. using subagent with tavily search tools if needed.
 3. Plan the task while strcitly follows the rules
 4. Await approval from the user
 5. Implement the task
