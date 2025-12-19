@@ -8,6 +8,11 @@ import {
 } from "@/lib/ai/schemas/station-extraction";
 import { STATION_SYSTEM_PROMPT, STATION_USER_PROMPT } from "@/lib/ai/prompts";
 import { validateSessionFromCookie } from "@/lib/auth";
+import {
+  DEFAULT_STATION_MODEL,
+  VALID_MODEL_IDS,
+  calculateCost,
+} from "@/lib/ai/models";
 
 export const maxDuration = 60;
 
@@ -29,35 +34,6 @@ function safeParseExtraction(jsonString: string): StationExtraction | null {
     console.warn("Failed to parse station extraction JSON");
     return null;
   }
-}
-
-// Default model if none specified
-const DEFAULT_MODEL = "openai/gpt-4o-mini";
-
-// Model pricing (per 1M tokens) - approximate costs
-const MODEL_PRICING: Record<string, { input: number; output: number }> = {
-  "openai/gpt-4.1-nano": { input: 0.1, output: 0.4 },
-  "openai/gpt-5-nano": { input: 0.1, output: 0.4 },
-  "openai/gpt-4o-mini": { input: 0.15, output: 0.6 },
-  "google/gemini-2.5-flash-lite": { input: 0.075, output: 0.3 },
-  "google/gemini-2.0-flash": { input: 0.1, output: 0.4 },
-};
-
-// Valid models that can be selected
-const VALID_MODELS = Object.keys(MODEL_PRICING);
-
-/**
- * Calculate cost based on token usage and model
- */
-function calculateCost(
-  model: string,
-  inputTokens: number,
-  outputTokens: number
-): number {
-  const pricing = MODEL_PRICING[model] ?? MODEL_PRICING[DEFAULT_MODEL];
-  const inputCost = (inputTokens / 1_000_000) * pricing.input;
-  const outputCost = (outputTokens / 1_000_000) * pricing.output;
-  return inputCost + outputCost;
 }
 
 /**
@@ -93,7 +69,7 @@ export async function POST(request: Request) {
 
   // Validate model (use default if not provided or invalid)
   const selectedModel =
-    model && VALID_MODELS.includes(model) ? model : DEFAULT_MODEL;
+    model && VALID_MODEL_IDS.includes(model) ? model : DEFAULT_STATION_MODEL;
 
   try {
     // Verify station exists

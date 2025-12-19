@@ -4,9 +4,7 @@ import {
   type StationExtraction,
 } from "./schemas/station-extraction";
 import { STATION_SYSTEM_PROMPT, STATION_USER_PROMPT } from "./prompts";
-
-// Default model if none specified
-const DEFAULT_MODEL = "openai/gpt-4o-mini";
+import { DEFAULT_STATION_MODEL } from "./models";
 
 /**
  * Extracts station data from sign and stock images.
@@ -35,7 +33,7 @@ export async function extractStation(
     { type: "image", image: stockUrl },
   ];
 
-  const selectedModel = modelId || DEFAULT_MODEL;
+  const selectedModel = modelId || DEFAULT_STATION_MODEL;
 
   const { object } = await generateObject({
     model: selectedModel,

@@ -5,6 +5,7 @@ import { Upload } from "lucide-react";
 import { toast } from "sonner";
 import { ImageCapture } from "@/components/ui/image-capture";
 import { AiActionButton } from "@/components/ai/ai-action-button";
+import { DEFAULT_STATION_MODEL_ID } from "@/components/ai/model-selector";
 import {
   useCreatePendingStation,
   useUploadStationImages,
@@ -135,6 +136,7 @@ export function StationCaptureForm({ sessionId }: StationCaptureFormProps) {
           label="Confirm & Extract"
           loadingLabel="Creating..."
           icon={<Upload className="size-4" />}
+          defaultModel={DEFAULT_STATION_MODEL_ID}
         />
       </div>
 

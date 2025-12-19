@@ -18,30 +18,17 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { OpenAIIcon, GoogleIcon } from "@/components/icons/brand-icons";
+import {
+  AVAILABLE_MODELS,
+  DEFAULT_LOADING_LIST_MODEL,
+  DEFAULT_STATION_MODEL,
+  type Model,
+} from "@/lib/ai/models";
 
-export interface Model {
-  id: string;
-  name: string;
-  provider: "openai" | "google";
-}
-
-export const AVAILABLE_MODELS: Model[] = [
-  { id: "openai/gpt-4.1-nano", name: "GPT-4.1 Nano", provider: "openai" },
-  { id: "openai/gpt-5-nano", name: "GPT-5 Nano", provider: "openai" },
-  { id: "openai/gpt-4o-mini", name: "GPT-4o Mini", provider: "openai" },
-  {
-    id: "google/gemini-2.5-flash-lite",
-    name: "Gemini 2.5 Flash Lite",
-    provider: "google",
-  },
-  {
-    id: "google/gemini-2.0-flash",
-    name: "Gemini 2.0 Flash",
-    provider: "google",
-  },
-];
-
-export const DEFAULT_MODEL_ID = "openai/gpt-4o-mini";
+// Re-export for backwards compatibility
+export { AVAILABLE_MODELS, type Model };
+export const DEFAULT_MODEL_ID = DEFAULT_LOADING_LIST_MODEL;
+export const DEFAULT_STATION_MODEL_ID = DEFAULT_STATION_MODEL;
 
 function ProviderIcon({ provider }: { provider: Model["provider"] }) {
   if (provider === "openai") {
