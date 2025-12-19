@@ -636,3 +636,31 @@ npm run db:migrate
 ```
 
 ---
+
+## Streaming Extraction Persistence Fix
+### Status: Complete
+
+### Implementation Notes
+
+See: [`notes/streaming-extraction-persistence.md`](./notes/streaming-extraction-persistence.md)
+
+### Summary
+
+Fixed unreliable database persistence when using Vercel AI SDK's `streamObject`. The `onFinish` callback was not guaranteed to complete before the HTTP response ended, causing extraction results to be lost.
+
+**Solution:**
+1. **Server-side:** Use `result.object` promise instead of `onFinish` for reliable persistence
+2. **Client-side:** Use React Query's `setQueryData` instead of `invalidateQueries` for immediate cache updates
+
+### Files Created/Modified
+
+| File | Change |
+|------|--------|
+| `app/api/extract-stream/route.ts` | Replaced `onFinish` with `result.object` promise |
+| `hooks/extraction/use-streaming-extraction.ts` | Replaced `invalidateQueries` with `setQueryData` |
+| `app/api/station-extract-stream/route.ts` | **Created** - Streaming endpoint for stations |
+| `hooks/stations/use-streaming-station-extraction.ts` | **Created** - Streaming hook for stations |
+| `hooks/stations/index.ts` | Added export for new hook |
+| `notes/streaming-extraction-persistence.md` | **Created** - Implementation notes |
+
+---
