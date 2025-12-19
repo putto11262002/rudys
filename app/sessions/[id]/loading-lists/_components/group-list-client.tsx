@@ -96,8 +96,8 @@ export function GroupListClient({
         </div>
       ) : (
         <div className="space-y-4 pt-4">
-          <h2 className="text-sm font-medium text-muted-foreground">
-            Loading Lists ({groups.length})
+          <h2 className="text-base font-medium">
+            Captured ({groups.length})
           </h2>
           {groups.map((group) => (
             <GroupCard

@@ -119,6 +119,18 @@ export function StationCaptureForm({ sessionId }: StationCaptureFormProps) {
 
   return (
     <div className="space-y-4">
+      {/* Upload button with model selector */}
+      <div className="flex justify-start sm:justify-end">
+        <AiActionButton
+          onAction={handleSubmit}
+          disabled={isProcessing || !signImage || !stockImage}
+          isLoading={isProcessing}
+          label="Confirm & Extract"
+          loadingLabel="Uploading..."
+          icon={<Upload className="size-4" />}
+        />
+      </div>
+
       {/* Two stacked capture boxes */}
       <div className="space-y-3">
         <ImageCapture
@@ -134,18 +146,6 @@ export function StationCaptureForm({ sessionId }: StationCaptureFormProps) {
           onChange={setStockImage}
           disabled={isProcessing}
           alt="Stock"
-        />
-      </div>
-
-      {/* Upload button with model selector */}
-      <div className="flex justify-start">
-        <AiActionButton
-          onAction={handleSubmit}
-          disabled={isProcessing || !signImage || !stockImage}
-          isLoading={isProcessing}
-          label="Confirm & Extract"
-          loadingLabel="Uploading..."
-          icon={<Upload className="size-4" />}
         />
       </div>
     </div>

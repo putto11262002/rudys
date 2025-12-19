@@ -126,8 +126,8 @@ export default function InventoryPage({ params }: InventoryPageProps) {
       {/* Station List */}
       {stations.length > 0 && (
         <div className="space-y-4 mb-6">
-          <h2 className="text-lg font-semibold">
-            Stations ({stations.length})
+          <h2 className="text-base font-medium">
+            Captured ({stations.length})
           </h2>
           {stations.map((station) => (
             <StationCard key={station.id} station={station} sessionId={id} />
