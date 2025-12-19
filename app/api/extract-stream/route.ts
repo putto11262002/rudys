@@ -14,19 +14,40 @@ import {
   LOADING_LIST_SYSTEM_PROMPT,
   LOADING_LIST_USER_PROMPT,
 } from "@/lib/ai/prompts";
+import { validateSessionFromCookie } from "@/lib/auth";
 
 export const maxDuration = 60;
+
+/**
+ * Safely parse JSON that may be truncated/malformed.
+ * Returns null if parsing fails completely.
+ */
+function safeParseExtraction(jsonString: string): LoadingListExtraction | null {
+  try {
+    const parsed = JSON.parse(jsonString);
+    // Validate with zod schema
+    const result = LoadingListExtractionSchema.safeParse(parsed);
+    if (result.success) {
+      return result.data;
+    }
+    console.warn("Extraction validation failed:", result.error.message);
+    return null;
+  } catch {
+    console.warn("Failed to parse extraction JSON");
+    return null;
+  }
+}
 
 // Default model if none specified
 const DEFAULT_MODEL = "google/gemini-2.5-flash-lite";
 
 // Model pricing (per 1M tokens) - approximate costs
 const MODEL_PRICING: Record<string, { input: number; output: number }> = {
-  "openai/gpt-4.1-nano": { input: 0.10, output: 0.40 },
-  "openai/gpt-5-nano": { input: 0.10, output: 0.40 },
-  "openai/gpt-4o-mini": { input: 0.15, output: 0.60 },
-  "google/gemini-2.5-flash-lite": { input: 0.075, output: 0.30 },
-  "google/gemini-2.0-flash": { input: 0.10, output: 0.40 },
+  "openai/gpt-4.1-nano": { input: 0.1, output: 0.4 },
+  "openai/gpt-5-nano": { input: 0.1, output: 0.4 },
+  "openai/gpt-4o-mini": { input: 0.15, output: 0.6 },
+  "google/gemini-2.5-flash-lite": { input: 0.075, output: 0.3 },
+  "google/gemini-2.0-flash": { input: 0.1, output: 0.4 },
 };
 
 // Valid models that can be selected
@@ -38,7 +59,7 @@ const VALID_MODELS = Object.keys(MODEL_PRICING);
 function calculateCost(
   model: string,
   inputTokens: number,
-  outputTokens: number
+  outputTokens: number,
 ): number {
   const pricing = MODEL_PRICING[model] ?? MODEL_PRICING[DEFAULT_MODEL];
   const inputCost = (inputTokens / 1_000_000) * pricing.input;
@@ -59,7 +80,7 @@ interface ExtractionMetadata {
 async function saveExtraction(
   groupId: string,
   extraction: LoadingListExtraction,
-  metadata: ExtractionMetadata
+  metadata: ExtractionMetadata,
 ): Promise<{ extractionId: string; itemCount: number }> {
   // Delete existing extraction and items for this group (for re-extraction)
   await db
@@ -99,7 +120,7 @@ async function saveExtraction(
         description: item.description,
         quantity: item.quantity,
         source: "extraction" as const,
-      }))
+      })),
     );
   }
 
@@ -110,6 +131,11 @@ async function saveExtraction(
 }
 
 export async function POST(request: Request) {
+  const isValid = validateSessionFromCookie(request.headers.get("cookie"));
+  if (!isValid) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
   const body = await request.json();
   const { groupId, model } = body;
 
@@ -121,7 +147,8 @@ export async function POST(request: Request) {
   }
 
   // Validate model (use default if not provided or invalid)
-  const selectedModel = model && VALID_MODELS.includes(model) ? model : DEFAULT_MODEL;
+  const selectedModel =
+    model && VALID_MODELS.includes(model) ? model : DEFAULT_MODEL;
 
   try {
     // Get group with images
@@ -161,57 +188,95 @@ export async function POST(request: Request) {
       model: selectedModel,
       schema: LoadingListExtractionSchema,
       schemaName: "LoadingListExtraction",
-      schemaDescription: "Extracted activities and line items from loading list screenshots",
+      schemaDescription:
+        "Extracted activities and line items from loading list screenshots",
       messages: [
         { role: "system", content: LOADING_LIST_SYSTEM_PROMPT },
         { role: "user", content },
       ],
     });
 
-    // Use result.object promise for reliable persistence (not onFinish which may not complete)
-    // This runs in parallel with the streaming response
-    result.object
-      .then(async (finalObject) => {
-        // Get usage from the result after stream completes
-        const usage = await result.usage;
-        const inputTokens = usage?.inputTokens;
-        const outputTokens = usage?.outputTokens;
-        const totalCost =
-          inputTokens !== undefined && outputTokens !== undefined
-            ? calculateCost(selectedModel, inputTokens, outputTokens)
-            : undefined;
+    // Create a custom streaming response that:
+    // 1. Streams chunks to client in real-time
+    // 2. Accumulates the full JSON string
+    // 3. Persists to database BEFORE the response ends (critical for serverless)
+    const encoder = new TextEncoder();
 
-        // Save extraction (all items, no validation)
-        const { itemCount } = await saveExtraction(groupId, finalObject, {
-          model: selectedModel,
-          inputTokens,
-          outputTokens,
-          totalCost,
-        });
+    const stream = new ReadableStream({
+      async start(controller) {
+        let accumulatedJson = "";
 
-        // Determine group status
-        const newStatus =
-          finalObject.status === "error" ? "needs_attention" : "extracted";
+        try {
+          // Iterate through textStream - this gives us raw JSON string chunks
+          for await (const chunk of result.textStream) {
+            accumulatedJson += chunk;
+            // Stream chunk to client immediately
+            controller.enqueue(encoder.encode(chunk));
+          }
 
-        await db
-          .update(employeeCaptureGroups)
-          .set({ status: newStatus })
-          .where(eq(employeeCaptureGroups.id, groupId));
+          // Stream finished - now persist to database BEFORE closing
+          const extraction = safeParseExtraction(accumulatedJson);
 
-        console.log(
-          `Extraction persisted for group ${groupId}: ${itemCount} items`
-        );
-      })
-      .catch(async (error) => {
-        // Handle validation failures or stream errors
-        console.error(`Extraction failed for group ${groupId}:`, error);
-        await db
-          .update(employeeCaptureGroups)
-          .set({ status: "needs_attention" })
-          .where(eq(employeeCaptureGroups.id, groupId));
-      });
+          if (extraction) {
+            // Get usage stats
+            const usage = await result.usage;
+            const inputTokens = usage?.inputTokens;
+            const outputTokens = usage?.outputTokens;
+            const totalCost =
+              inputTokens !== undefined && outputTokens !== undefined
+                ? calculateCost(selectedModel, inputTokens, outputTokens)
+                : undefined;
 
-    return result.toTextStreamResponse();
+            // Save to database
+            const { itemCount } = await saveExtraction(groupId, extraction, {
+              model: selectedModel,
+              inputTokens,
+              outputTokens,
+              totalCost,
+            });
+
+            // Update group status
+            const newStatus =
+              extraction.status === "error" ? "needs_attention" : "extracted";
+
+            await db
+              .update(employeeCaptureGroups)
+              .set({ status: newStatus })
+              .where(eq(employeeCaptureGroups.id, groupId));
+
+            console.log(
+              `Extraction persisted for group ${groupId}: ${itemCount} items`,
+            );
+          } else {
+            // Parsing failed - mark as needs attention
+            console.error(
+              `Failed to parse extraction for group ${groupId}. Raw length: ${accumulatedJson.length}`,
+            );
+            await db
+              .update(employeeCaptureGroups)
+              .set({ status: "needs_attention" })
+              .where(eq(employeeCaptureGroups.id, groupId));
+          }
+
+          controller.close();
+        } catch (error) {
+          console.error(`Stream error for group ${groupId}:`, error);
+          // Still try to update status on error
+          await db
+            .update(employeeCaptureGroups)
+            .set({ status: "needs_attention" })
+            .where(eq(employeeCaptureGroups.id, groupId));
+          controller.error(error);
+        }
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Transfer-Encoding": "chunked",
+      },
+    });
   } catch (error) {
     console.error("Failed to extract group:", error);
     return Response.json({ error: "Failed to extract group" }, { status: 500 });

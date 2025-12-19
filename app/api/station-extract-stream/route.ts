@@ -7,8 +7,29 @@ import {
   type StationExtraction,
 } from "@/lib/ai/schemas/station-extraction";
 import { STATION_SYSTEM_PROMPT, STATION_USER_PROMPT } from "@/lib/ai/prompts";
+import { validateSessionFromCookie } from "@/lib/auth";
 
 export const maxDuration = 60;
+
+/**
+ * Safely parse JSON that may be truncated/malformed.
+ * Returns null if parsing fails completely.
+ */
+function safeParseExtraction(jsonString: string): StationExtraction | null {
+  try {
+    const parsed = JSON.parse(jsonString);
+    // Validate with zod schema
+    const result = StationExtractionSchema.safeParse(parsed);
+    if (result.success) {
+      return result.data;
+    }
+    console.warn("Station extraction validation failed:", result.error.message);
+    return null;
+  } catch {
+    console.warn("Failed to parse station extraction JSON");
+    return null;
+  }
+}
 
 // Default model if none specified
 const DEFAULT_MODEL = "google/gemini-2.5-flash-lite";
@@ -55,6 +76,11 @@ function mapExtractionStatusToStationStatus(
 }
 
 export async function POST(request: Request) {
+  const isValid = validateSessionFromCookie(request.headers.get("cookie"));
+  if (!isValid) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
   const body = await request.json();
   const { stationId, model } = body;
 
@@ -110,53 +136,92 @@ export async function POST(request: Request) {
       ],
     });
 
-    // Use result.object promise for reliable persistence (not onFinish which may not complete)
-    // This runs in parallel with the streaming response
-    result.object
-      .then(async (finalObject) => {
-        // Get usage from the result after stream completes
-        const usage = await result.usage;
-        const inputTokens = usage?.inputTokens;
-        const outputTokens = usage?.outputTokens;
-        const totalCost =
-          inputTokens !== undefined && outputTokens !== undefined
-            ? calculateCost(selectedModel, inputTokens, outputTokens)
-            : undefined;
+    // Create a custom streaming response that:
+    // 1. Streams chunks to client in real-time
+    // 2. Accumulates the full JSON string
+    // 3. Persists to database BEFORE the response ends (critical for serverless)
+    const encoder = new TextEncoder();
 
-        // Map extraction status to station status
-        const newStatus = mapExtractionStatusToStationStatus(finalObject);
+    const stream = new ReadableStream({
+      async start(controller) {
+        let accumulatedJson = "";
 
-        // Update station with extraction results and metadata
-        await db
-          .update(stationCaptures)
-          .set({
-            status: newStatus,
-            productCode: finalObject.productCode,
-            minQty: finalObject.minQty,
-            maxQty: finalObject.maxQty,
-            onHandQty: finalObject.onHandQty,
-            errorMessage:
-              finalObject.status !== "success" ? finalObject.message : null,
-            model: selectedModel,
-            inputTokens,
-            outputTokens,
-            totalCost,
-            extractedAt: new Date().toISOString(),
-          })
-          .where(eq(stationCaptures.id, stationId));
+        try {
+          // Iterate through textStream - this gives us raw JSON string chunks
+          for await (const chunk of result.textStream) {
+            accumulatedJson += chunk;
+            // Stream chunk to client immediately
+            controller.enqueue(encoder.encode(chunk));
+          }
 
-        console.log(`Station extraction persisted for station ${stationId}`);
-      })
-      .catch(async (error) => {
-        // Handle validation failures or stream errors
-        console.error(`Station extraction failed for station ${stationId}:`, error);
-        await db
-          .update(stationCaptures)
-          .set({ status: "needs_attention" })
-          .where(eq(stationCaptures.id, stationId));
-      });
+          // Stream finished - now persist to database BEFORE closing
+          const extraction = safeParseExtraction(accumulatedJson);
 
-    return result.toTextStreamResponse();
+          if (extraction) {
+            // Get usage stats
+            const usage = await result.usage;
+            const inputTokens = usage?.inputTokens;
+            const outputTokens = usage?.outputTokens;
+            const totalCost =
+              inputTokens !== undefined && outputTokens !== undefined
+                ? calculateCost(selectedModel, inputTokens, outputTokens)
+                : undefined;
+
+            // Map extraction status to station status
+            const newStatus = mapExtractionStatusToStationStatus(extraction);
+
+            // Update station with extraction results and metadata
+            await db
+              .update(stationCaptures)
+              .set({
+                status: newStatus,
+                productCode: extraction.productCode,
+                minQty: extraction.minQty,
+                maxQty: extraction.maxQty,
+                onHandQty: extraction.onHandQty,
+                errorMessage:
+                  extraction.status !== "success" ? extraction.message : null,
+                model: selectedModel,
+                inputTokens,
+                outputTokens,
+                totalCost,
+                extractedAt: new Date().toISOString(),
+              })
+              .where(eq(stationCaptures.id, stationId));
+
+            console.log(
+              `Station extraction persisted for station ${stationId}`,
+            );
+          } else {
+            // Parsing failed - mark as needs attention
+            console.error(
+              `Failed to parse station extraction for ${stationId}. Raw length: ${accumulatedJson.length}`,
+            );
+            await db
+              .update(stationCaptures)
+              .set({ status: "needs_attention" })
+              .where(eq(stationCaptures.id, stationId));
+          }
+
+          controller.close();
+        } catch (error) {
+          console.error(`Stream error for station ${stationId}:`, error);
+          // Still try to update status on error
+          await db
+            .update(stationCaptures)
+            .set({ status: "needs_attention" })
+            .where(eq(stationCaptures.id, stationId));
+          controller.error(error);
+        }
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Transfer-Encoding": "chunked",
+      },
+    });
   } catch (error) {
     console.error("Failed to extract station:", error);
     return Response.json({ error: "Failed to extract station" }, { status: 500 });
