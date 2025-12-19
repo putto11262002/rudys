@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Plus, FolderOpen, Loader2, Package } from "lucide-react";
+import { Plus, FolderOpen, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -81,32 +81,18 @@ export default function HomePage() {
 
   return (
     <main className="container max-w-2xl mx-auto p-4 py-8">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Sessions</h1>
-          <p className="text-muted-foreground text-sm">
-            Manage your loading list capture sessions
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button asChild variant="outline">
-            <Link href="/products">
-              <Package className="size-4 mr-2" />
-              Catalog
-            </Link>
-          </Button>
-          <Button
-            onClick={handleCreateSession}
-            disabled={createSession.isPending}
-          >
-            {createSession.isPending ? (
-              <Loader2 className="size-4 mr-2 animate-spin" />
-            ) : (
-              <Plus className="size-4 mr-2" />
-            )}
-            New Session
-          </Button>
-        </div>
+      <div className="flex justify-end mb-6">
+        <Button
+          onClick={handleCreateSession}
+          disabled={createSession.isPending}
+        >
+          {createSession.isPending ? (
+            <Loader2 className="size-4 mr-2 animate-spin" />
+          ) : (
+            <Plus className="size-4 mr-2" />
+          )}
+          New Session
+        </Button>
       </div>
 
       {isLoading ? (
