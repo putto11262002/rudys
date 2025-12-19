@@ -24,25 +24,11 @@ import { useSessions, useCreateSession } from "@/hooks/sessions";
 import { DeleteSessionButton } from "./_components/delete-session-button";
 import type { Session } from "@/lib/db/schema";
 
-const statusLabels: Record<Session["status"], string> = {
-  draft: "Draft",
-  capturing_loading_lists: "Capturing Loading Lists",
-  review_demand: "Review Demand",
-  capturing_inventory: "Capturing Inventory",
-  review_order: "Review Order",
-  completed: "Completed",
-};
-
-const statusVariants: Record<
-  Session["status"],
-  "default" | "secondary" | "outline"
-> = {
-  draft: "outline",
-  capturing_loading_lists: "secondary",
-  review_demand: "secondary",
-  capturing_inventory: "secondary",
-  review_order: "secondary",
-  completed: "default",
+const phaseLabels: Record<Session["lastPhase"], string> = {
+  "loading-lists": "Loading Lists",
+  demand: "Demand Review",
+  inventory: "Inventory Capture",
+  order: "Order Review",
 };
 
 function formatDateTime(date: Date | string) {
@@ -147,8 +133,8 @@ export default function HomePage() {
                       {formatDateTime(session.createdAt)}
                     </CardTitle>
                     <CardDescription className="mt-1">
-                      <Badge variant={statusVariants[session.status]}>
-                        {statusLabels[session.status]}
+                      <Badge variant="secondary">
+                        {phaseLabels[session.lastPhase]}
                       </Badge>
                     </CardDescription>
                   </div>

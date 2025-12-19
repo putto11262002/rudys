@@ -3,7 +3,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { client } from "@/lib/api/client";
 import { sessionKeys } from "./query-keys";
-import type { sessionState } from "@/lib/db/schema";
+import type { sessionPhase } from "@/lib/db/schema";
 
 // ============================================================================
 // Queries
@@ -81,24 +81,24 @@ export function useDeleteSession() {
   });
 }
 
-export function useUpdateSessionStatus() {
+export function useUpdatePhase() {
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: async ({
       id,
-      status,
+      lastPhase,
     }: {
       id: string;
-      status: (typeof sessionState)[number];
+      lastPhase: (typeof sessionPhase)[number];
     }) => {
-      const res = await client.api.sessions[":id"].status.$patch({
+      const res = await client.api.sessions[":id"].phase.$patch({
         param: { id },
-        json: { status },
+        json: { lastPhase },
       });
       if (!res.ok) {
         const error = await res.json();
-        throw new Error("error" in error ? error.error : "Failed to update session status");
+        throw new Error("error" in error ? error.error : "Failed to update session phase");
       }
       return res.json();
     },

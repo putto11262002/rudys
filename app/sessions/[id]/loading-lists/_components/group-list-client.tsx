@@ -2,8 +2,7 @@
 
 import { useState } from "react";
 import dynamic from "next/dynamic";
-import { useRouter } from "next/navigation";
-import { ArrowRight, Loader2, Plus, Users } from "lucide-react";
+import { Loader2, Plus, Users } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,7 +18,6 @@ import {
   ModelSelector,
   DEFAULT_MODEL_ID,
 } from "@/components/ai/model-selector";
-import { useUpdateSessionStatus } from "@/hooks/sessions";
 import { useGroups, type GroupWithImages } from "@/hooks/groups";
 import { useStreamingExtraction } from "@/hooks/extraction";
 
@@ -46,7 +44,6 @@ export function GroupListClient({
   sessionId,
   initialGroups,
 }: GroupListClientProps) {
-  const router = useRouter();
   const [isCapturing, setIsCapturing] = useState(false);
   // Track which group is currently extracting (only one at a time with streaming)
   const [extractingGroupId, setExtractingGroupId] = useState<string | null>(
@@ -54,14 +51,12 @@ export function GroupListClient({
   );
   // Model selection for extraction
   const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL_ID);
-  const updateSessionStatus = useUpdateSessionStatus();
 
   // Streaming extraction - lifted to parent so GroupCard can show partial results
   const {
     partialResult,
     isExtracting,
     extract,
-    groupId: streamingGroupId,
   } = useStreamingExtraction({
     sessionId,
     onComplete: () => {
@@ -80,9 +75,6 @@ export function GroupListClient({
   const { data: groupsData } = useGroups(sessionId);
   const groups = groupsData?.groups ?? initialGroups;
 
-  // Groups with images (for enabling Continue button)
-  const groupsWithImages = groups.filter((g) => g.images.length > 0);
-  const hasAnyImages = groupsWithImages.length > 0;
   const isAnyExtracting = extractingGroupId !== null;
 
   const handleStarted = (groupId: string) => {
@@ -96,26 +88,6 @@ export function GroupListClient({
 
   const handleComplete = () => {
     // Clear extracting state - already handled by streaming onComplete
-  };
-
-  const handleContinueToReview = () => {
-    if (!hasAnyImages) {
-      toast.error("No images to review");
-      return;
-    }
-
-    // Update session status and navigate to demand page
-    updateSessionStatus.mutate(
-      { id: sessionId, status: "review_demand" },
-      {
-        onSuccess: () => {
-          router.push(`/sessions/${sessionId}/demand`);
-        },
-        onError: (error) => {
-          toast.error(error.message);
-        },
-      }
-    );
   };
 
   if (groups.length === 0 && !isCapturing) {
@@ -139,84 +111,44 @@ export function GroupListClient({
   }
 
   return (
-    <>
-      <div className="space-y-4 pb-24">
-        {/* Model selector */}
-        <div className="flex items-center">
-          <ModelSelector
-            value={selectedModel}
-            onChange={setSelectedModel}
-            disabled={isAnyExtracting}
-          />
-        </div>
-
-        {/* Capture card at the top when active */}
-        {isCapturing && (
-          <CaptureCard
-            sessionId={sessionId}
-            onCancel={() => setIsCapturing(false)}
-            onStarted={handleStarted}
-            onComplete={handleComplete}
-          />
-        )}
-
-        {/* Groups list - newest first (already sorted by data loader) */}
-        {groups.map((group) => (
-          <GroupCard
-            key={group.id}
-            group={group}
-            sessionId={sessionId}
-            isExtracting={extractingGroupId === group.id && isExtracting}
-            streamingResult={
-              extractingGroupId === group.id ? partialResult : undefined
-            }
-            onRerunExtraction={() => {
-              // Don't allow if already extracting another group
-              if (extractingGroupId !== null) return;
-              setExtractingGroupId(group.id);
-              extract(group.id, selectedModel);
-            }}
-          />
-        ))}
+    <div className="space-y-4">
+      {/* Model selector */}
+      <div className="flex items-center">
+        <ModelSelector
+          value={selectedModel}
+          onChange={setSelectedModel}
+          disabled={isAnyExtracting}
+        />
       </div>
 
-      {/* Floating bottom banner */}
-      <div className="fixed bottom-0 left-0 right-0 bg-background border-t p-4">
-        <div className="container max-w-2xl mx-auto flex items-center justify-between gap-3">
-          {/* Add Loading List - always enabled (async operations) */}
-          <Button
-            variant="outline"
-            onClick={() => setIsCapturing(true)}
-            disabled={isCapturing}
-          >
-            <Plus className="size-4 mr-2" />
-            Add Loading List
-          </Button>
+      {/* Capture card at the top when active */}
+      {isCapturing && (
+        <CaptureCard
+          sessionId={sessionId}
+          onCancel={() => setIsCapturing(false)}
+          onStarted={handleStarted}
+          onComplete={handleComplete}
+        />
+      )}
 
-          {/* Continue to Review - blocked only during extraction */}
-          <Button
-            onClick={handleContinueToReview}
-            disabled={!hasAnyImages || updateSessionStatus.isPending || isAnyExtracting}
-          >
-            {updateSessionStatus.isPending ? (
-              <>
-                <Loader2 className="size-4 mr-2 animate-spin" />
-                Loading...
-              </>
-            ) : isAnyExtracting ? (
-              <>
-                <Loader2 className="size-4 mr-2 animate-spin" />
-                Extracting...
-              </>
-            ) : (
-              <>
-                Continue to Review
-                <ArrowRight className="size-4 ml-2" />
-              </>
-            )}
-          </Button>
-        </div>
-      </div>
-    </>
+      {/* Groups list - newest first (already sorted by data loader) */}
+      {groups.map((group) => (
+        <GroupCard
+          key={group.id}
+          group={group}
+          sessionId={sessionId}
+          isExtracting={extractingGroupId === group.id && isExtracting}
+          streamingResult={
+            extractingGroupId === group.id ? partialResult : undefined
+          }
+          onRerunExtraction={() => {
+            // Don't allow if already extracting another group
+            if (extractingGroupId !== null) return;
+            setExtractingGroupId(group.id);
+            extract(group.id, selectedModel);
+          }}
+        />
+      ))}
+    </div>
   );
 }

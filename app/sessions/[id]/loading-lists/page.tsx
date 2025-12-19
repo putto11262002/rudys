@@ -2,13 +2,13 @@
 
 import { use } from "react";
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { useSession } from "@/hooks/sessions";
 import { useGroups } from "@/hooks/groups";
 import { GroupListClient } from "./_components/group-list-client";
+import { WorkflowNavigation } from "@/components/workflow-navigation";
 
 interface LoadingListsPageProps {
   params: Promise<{ id: string }>;
@@ -49,18 +49,16 @@ export default function LoadingListsPage({ params }: LoadingListsPageProps) {
 
   if (isLoading) {
     return (
-      <main className="container max-w-2xl mx-auto p-4 py-8">
+      <main className="container max-w-2xl mx-auto p-4 py-8 pb-24">
         <div className="mb-6">
-          <Button asChild variant="ghost" size="sm" className="mb-4">
-            <Link href="/">
-              <ArrowLeft className="size-4 mr-2" />
-              Back to Sessions
-            </Link>
-          </Button>
           <Skeleton className="h-8 w-48 mb-2" />
           <Skeleton className="h-4 w-64" />
         </div>
         <GroupListSkeleton />
+        <WorkflowNavigation
+          prev={{ href: "/", label: "Sessions" }}
+          next={{ href: `/sessions/${id}/demand`, label: "Demand" }}
+        />
       </main>
     );
   }
@@ -79,14 +77,8 @@ export default function LoadingListsPage({ params }: LoadingListsPageProps) {
   }
 
   return (
-    <main className="container max-w-2xl mx-auto p-4 py-8">
+    <main className="container max-w-2xl mx-auto p-4 py-8 pb-24">
       <div className="mb-6">
-        <Button asChild variant="ghost" size="sm" className="mb-4">
-          <Link href="/">
-            <ArrowLeft className="size-4 mr-2" />
-            Back to Sessions
-          </Link>
-        </Button>
         <h1 className="text-2xl font-bold tracking-tight">Loading Lists</h1>
         <p className="text-muted-foreground text-sm">
           Session started{" "}
@@ -98,6 +90,11 @@ export default function LoadingListsPage({ params }: LoadingListsPageProps) {
       </div>
 
       <GroupListClient sessionId={id} initialGroups={groups} />
+
+      <WorkflowNavigation
+        prev={{ href: "/", label: "Sessions" }}
+        next={{ href: `/sessions/${id}/demand`, label: "Demand" }}
+      />
     </main>
   );
 }
