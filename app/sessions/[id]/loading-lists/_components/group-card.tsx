@@ -177,9 +177,6 @@ interface NormalizedExtraction {
     totalActivities?: number;
     totalLineItems?: number;
   };
-  // Metadata (only available after extraction completes)
-  model?: string | null;
-  totalCost?: number | null;
 }
 
 // Item type for display
@@ -218,18 +215,10 @@ function ExtractionDataView({
 
   return (
     <div className="space-y-4">
-      {/* Status message */}
-      {message && (
+      {/* Status message - only show for warning/error */}
+      {message && status !== "success" && (
         <Badge
-          variant={
-            status === "error"
-              ? "error"
-              : status === "warning"
-                ? "warning"
-                : status === "success"
-                  ? "success"
-                  : "info"
-          }
+          variant={status === "error" ? "error" : status === "warning" ? "warning" : "info"}
           className="w-full justify-start"
         >
           {message}
@@ -270,7 +259,7 @@ function ExtractionDataView({
                           )}
                         </div>
                         <Badge variant="secondary" className="text-xs">
-                          x{item.quantity}
+                          {item.quantity}
                         </Badge>
                       </div>
                     ))}
@@ -298,20 +287,6 @@ function ExtractionDataView({
         <div className="flex items-center justify-center gap-2 py-4 text-sm text-muted-foreground">
           <Loader2 className="size-4 animate-spin" />
           Waiting for data...
-        </div>
-      )}
-
-      {/* Extraction metadata footer */}
-      {!isStreaming && (extraction.model || extraction.totalCost !== undefined) && (
-        <div className="flex items-center justify-between pt-3 mt-3 border-t text-xs text-muted-foreground">
-          {extraction.model && (
-            <span className="font-mono">
-              {extraction.model.split("/")[1] ?? extraction.model}
-            </span>
-          )}
-          {extraction.totalCost !== undefined && extraction.totalCost !== null && (
-            <span>${extraction.totalCost.toFixed(4)}</span>
-          )}
         </div>
       )}
     </div>
@@ -372,8 +347,6 @@ export function GroupCard({
           []
         ) as Array<{ activityCode?: string }>,
         summary: displayResult.summary as NormalizedExtraction["summary"],
-        model: group.extraction?.model,
-        totalCost: group.extraction?.totalCost,
       }
     : null;
 
@@ -382,9 +355,6 @@ export function GroupCard({
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           {group.employeeLabel || `Group ${group.id.slice(0, 8)}`}
-          <span className="text-sm font-normal text-muted-foreground">
-            ({group.images.length} image{group.images.length !== 1 ? "s" : ""})
-          </span>
           <StatusBadge
             groupStatus={group.status}
             extractionStatus={
@@ -413,29 +383,33 @@ export function GroupCard({
           <ImageGrid images={group.images} />
         </CollapsibleSection>
 
-        {/* Extracted data collapsible - show during extraction with streaming results */}
-        {(hasExtractionResult || isExtracting) && normalizedExtraction && (
-          <CollapsibleSection
-            title={isExtracting ? "Extracting..." : "Extracted Items"}
-            icon={FileText}
-            defaultOpen={isExtracted || isExtracting}
-            count={lineItemCount > 0 ? lineItemCount : undefined}
-          >
+        {/* Extracted data collapsible - always show section, content varies by state */}
+        <CollapsibleSection
+          title={isExtracting ? "Extracting..." : "Extracted Items"}
+          icon={FileText}
+          defaultOpen={isExtracted || isExtracting}
+          count={lineItemCount > 0 ? lineItemCount : undefined}
+        >
+          {/* Has extraction data or streaming */}
+          {(hasExtractionResult || isExtracting) && normalizedExtraction ? (
             <ExtractionDataView
               extraction={normalizedExtraction}
               items={displayItems}
               isStreaming={isExtracting}
             />
-          </CollapsibleSection>
-        )}
-
-        {/* Extracting state without any streaming data yet */}
-        {isExtracting && !normalizedExtraction && (
-          <div className="flex items-center justify-center gap-2 py-4 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" />
-            Starting extraction...
-          </div>
-        )}
+          ) : isExtracting && !normalizedExtraction ? (
+            /* Extracting state without any streaming data yet */
+            <div className="flex items-center justify-center gap-2 py-4 text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" />
+              Starting extraction...
+            </div>
+          ) : (
+            /* Empty state - no extraction yet */
+            <p className="text-sm text-muted-foreground text-center py-4">
+              No extraction data
+            </p>
+          )}
+        </CollapsibleSection>
       </CardContent>
     </Card>
   );
