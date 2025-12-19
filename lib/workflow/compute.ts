@@ -1,5 +1,8 @@
-import type { StationCapture } from "@/lib/db/schema";
-import { getProduct } from "@/lib/products/catalog";
+import type {
+  StationCapture,
+  LoadingListItem,
+  LoadingListExtraction,
+} from "@/lib/db/schema";
 
 // ============================================================================
 // Types
@@ -8,7 +11,7 @@ import { getProduct } from "@/lib/products/catalog";
 export type ComputedDemandItem = {
   productCode: string;
   demandQty: number;
-  description?: string;
+  description?: string | null; // From AI extraction
   sources: Array<{
     groupId: string;
     employeeLabel: string | null;
@@ -18,7 +21,7 @@ export type ComputedDemandItem = {
 
 export type ComputedOrderItem = {
   productCode: string;
-  productDescription?: string;
+  productDescription?: string | null; // From AI extraction
   demandQty: number;
   onHandQty: number;
   minQty: number | null;
@@ -45,76 +48,82 @@ export type ExtractionStats = {
   totalGroups: number;
   extractedGroups: number;
   errorGroups: number;
+  warningGroups: number;
   totalActivities: number;
-  totalLineItems: number;
+  totalItems: number;
   totalCost: number;
 };
 
 // ============================================================================
-// Group type for computation (subset of full group)
+// Group type for computation (new schema)
 // ============================================================================
 
 export type GroupForComputation = {
   id: string;
   employeeLabel: string | null;
-  extractionResult: {
+  extraction: {
     status: string;
-    lineItems: Array<{
-      primaryCode: string;
-      quantity: number;
-      description?: string;
-      activityCode: string;
-    }>;
+    rawActivities: Array<{ activityCode: string }>;
     summary: {
       totalActivities: number;
       totalLineItems: number;
     };
     totalCost: number | null;
   } | null;
+  items: Array<{
+    productCode: string;
+    quantity: number;
+    activityCode: string;
+    description: string | null;
+  }>;
 };
 
 // ============================================================================
-// Demand Computation
+// Demand Computation (reads from extracted items)
 // ============================================================================
 
+/**
+ * Compute demand from extracted loading list items.
+ * All extracted items are included - no catalog validation.
+ */
 export function computeDemandFromGroups(
   groups: GroupForComputation[]
 ): ComputedDemandItem[] {
   const demandMap = new Map<string, ComputedDemandItem>();
 
   for (const group of groups) {
-    // Filter: no extraction result
-    if (!group.extractionResult) continue;
+    // Skip groups without extraction or with error status
+    if (!group.extraction) continue;
+    if (group.extraction.status === "error") continue;
 
-    // Filter: extraction failed
-    if (group.extractionResult.status === "error") continue;
+    // Process all extracted items
+    for (const item of group.items) {
+      // Skip invalid quantity
+      if (typeof item.quantity !== "number" || item.quantity <= 0) continue;
 
-    for (const lineItem of group.extractionResult.lineItems) {
-      // Filter: missing product code
-      if (!lineItem.primaryCode) continue;
+      const existing = demandMap.get(item.productCode);
 
-      // Filter: invalid quantity
-      if (typeof lineItem.quantity !== "number" || lineItem.quantity <= 0)
-        continue;
-
-      const existing = demandMap.get(lineItem.primaryCode);
       if (existing) {
-        existing.demandQty += lineItem.quantity;
+        existing.demandQty += item.quantity;
         existing.sources.push({
           groupId: group.id,
           employeeLabel: group.employeeLabel,
-          activityCode: lineItem.activityCode,
+          activityCode: item.activityCode,
         });
+        // Keep first non-null description encountered
+        if (!existing.description && item.description) {
+          existing.description = item.description;
+        }
       } else {
-        demandMap.set(lineItem.primaryCode, {
-          productCode: lineItem.primaryCode,
-          demandQty: lineItem.quantity,
-          description: lineItem.description,
+        demandMap.set(item.productCode, {
+          productCode: item.productCode,
+          demandQty: item.quantity,
+          description: item.description, // From AI extraction
           sources: [
             {
               groupId: group.id,
               employeeLabel: group.employeeLabel,
-              activityCode: lineItem.activityCode,
+              activityCode: item.activityCode,
             },
           ],
         });
@@ -131,6 +140,13 @@ export function computeDemandFromGroups(
 // Order Computation
 // ============================================================================
 
+/**
+ * Compute order items from demand and station captures.
+ *
+ * For products WITH station capture: use actual on-hand, min, max from station
+ * For products WITHOUT station capture: assume on-hand=0, min=0, max=demand
+ *   (pessimistic defaults - order exactly what's demanded)
+ */
 export function computeOrderItems(
   demandItems: ComputedDemandItem[],
   stations: StationCapture[]
@@ -141,16 +157,18 @@ export function computeOrderItems(
   for (const demand of demandItems) {
     // Find station for this product
     const station = stations.find((s) => s.productCode === demand.productCode);
-    const catalogProduct = getProduct(demand.productCode);
 
-    // isCaptured: station exists with images
+    // isCaptured: station exists with valid data
     const isCaptured = !!(
-      station?.signBlobUrl && station?.stockBlobUrl &&
-      station.status === "valid" && station.onHandQty !== null && station.maxQty !== null
+      station?.signBlobUrl &&
+      station?.stockBlobUrl &&
+      station.status === "valid" &&
+      station.onHandQty !== null &&
+      station.maxQty !== null
     );
 
-    // If we have a captured station, use station data
     if (isCaptured) {
+      // Use actual station data
       const onHandQty = station.onHandQty!;
       const maxQty = station.maxQty!;
       const recommendedOrderQty = Math.max(0, demand.demandQty - onHandQty);
@@ -158,7 +176,7 @@ export function computeOrderItems(
 
       computed.push({
         productCode: demand.productCode,
-        productDescription: catalogProduct?.description,
+        productDescription: demand.description,
         demandQty: demand.demandQty,
         onHandQty,
         minQty: station.minQty,
@@ -167,38 +185,26 @@ export function computeOrderItems(
         exceedsMax,
         isCaptured: true,
       });
-      continue;
-    }
-
-    // Fall back to catalog if product exists there
-    if (catalogProduct) {
-      // Catalog fallback: assume onHand = 0 (pessimistic/conservative)
+    } else {
+      // No station capture - use pessimistic defaults
+      // Assume nothing on hand, order exactly what's demanded
       const onHandQty = 0;
-      const maxQty = catalogProduct.maxQty;
-      const minQty = catalogProduct.minQty;
-      const recommendedOrderQty = Math.max(0, demand.demandQty - onHandQty);
-      const exceedsMax = onHandQty + recommendedOrderQty > maxQty;
+      const minQty = 0;
+      const maxQty = demand.demandQty; // Max = demand (no buffer)
+      const recommendedOrderQty = demand.demandQty; // Order full demand
 
       computed.push({
         productCode: demand.productCode,
-        productDescription: catalogProduct.description,
+        productDescription: demand.description,
         demandQty: demand.demandQty,
         onHandQty,
         minQty,
         maxQty,
         recommendedOrderQty,
-        exceedsMax,
+        exceedsMax: false, // Can't exceed max when max = demand
         isCaptured: false,
       });
-      continue;
     }
-
-    // Product not in catalog and no valid station - skip
-    skipped.push({
-      productCode: demand.productCode,
-      demandQty: demand.demandQty,
-      reason: station ? (station.status !== "valid" ? "station_invalid" : "missing_data") : "no_station",
-    });
   }
 
   computed.sort((a, b) => a.productCode.localeCompare(b.productCode));
@@ -211,34 +217,42 @@ export function computeOrderItems(
 // Coverage Computation
 // ============================================================================
 
+/**
+ * Compute station capture coverage for demanded products.
+ *
+ * Coverage indicates how many products have actual station data vs using defaults.
+ * All products can now be computed (missing stations use pessimistic defaults),
+ * but coverage percentage shows data quality.
+ *
+ * - covered: products with valid station captures (accurate on-hand data)
+ * - missing: products using defaults (on-hand=0, max=demand)
+ * - isComplete: true when all products have station captures (100% coverage)
+ */
 export function computeCoverage(
   demandItems: ComputedDemandItem[],
   stations: StationCapture[]
 ): CoverageInfo {
   const demandedProducts = demandItems.map((d) => d.productCode);
   const validStationProducts = stations
-    .filter((s) => s.status === "valid" && s.onHandQty !== null)
+    .filter((s) => s.status === "valid" && s.onHandQty !== null && s.maxQty !== null)
     .map((s) => s.productCode)
     .filter((p): p is string => p !== null);
 
-  // Products are covered if they have a valid station OR exist in catalog
-  const covered = demandedProducts.filter(
-    (p) => validStationProducts.includes(p) || getProduct(p) !== undefined
+  // Products with station captures (accurate data)
+  const covered = demandedProducts.filter((p) =>
+    validStationProducts.includes(p)
   );
+  // Products using defaults (no station capture)
   const missing = demandedProducts.filter(
-    (p) => !validStationProducts.includes(p) && getProduct(p) === undefined
+    (p) => !validStationProducts.includes(p)
   );
 
-  // Percentage now represents station capture coverage (not total availability)
-  const capturedCount = demandedProducts.filter((p) =>
-    validStationProducts.includes(p)
-  ).length;
+  // Percentage represents station capture coverage (data quality metric)
   const percentage =
     demandedProducts.length > 0
-      ? Math.round((capturedCount / demandedProducts.length) * 100)
+      ? Math.round((covered.length / demandedProducts.length) * 100)
       : 100;
 
-  // isComplete means we can compute orders for all products
   return {
     covered,
     missing,
@@ -256,20 +270,27 @@ export function computeExtractionStats(
 ): ExtractionStats {
   let extractedGroups = 0;
   let errorGroups = 0;
+  let warningGroups = 0;
   let totalActivities = 0;
-  let totalLineItems = 0;
+  let totalItems = 0;
   let totalCost = 0;
 
   for (const group of groups) {
-    if (!group.extractionResult) continue;
+    if (!group.extraction) continue;
 
-    if (group.extractionResult.status === "error") {
+    if (group.extraction.status === "error") {
       errorGroups++;
+    } else if (group.extraction.status === "warning") {
+      warningGroups++;
+      extractedGroups++;
+      totalActivities += group.extraction.summary.totalActivities;
+      totalItems += group.items.length;
+      totalCost += group.extraction.totalCost ?? 0;
     } else {
       extractedGroups++;
-      totalActivities += group.extractionResult.summary.totalActivities;
-      totalLineItems += group.extractionResult.summary.totalLineItems;
-      totalCost += group.extractionResult.totalCost ?? 0;
+      totalActivities += group.extraction.summary.totalActivities;
+      totalItems += group.items.length;
+      totalCost += group.extraction.totalCost ?? 0;
     }
   }
 
@@ -277,8 +298,9 @@ export function computeExtractionStats(
     totalGroups: groups.length,
     extractedGroups,
     errorGroups,
+    warningGroups,
     totalActivities,
-    totalLineItems,
+    totalItems,
     totalCost,
   };
 }

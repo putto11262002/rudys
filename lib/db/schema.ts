@@ -99,7 +99,8 @@ export const employeeCaptureGroupsRelations = relations(
       references: [sessions.id],
     }),
     images: many(loadingListImages),
-    extractionResult: one(loadingListExtractionResults),
+    extraction: one(loadingListExtractions),
+    items: many(loadingListItems),
   })
 );
 
@@ -113,42 +114,16 @@ export const loadingListImagesRelations = relations(
   })
 );
 
-// Loading list extraction results (AI output per group)
-export const loadingListExtractionResults = pgTable(
-  "loading_list_extraction_results",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    groupId: uuid("group_id")
-      .notNull()
-      .references(() => employeeCaptureGroups.id, { onDelete: "cascade" }),
+// ============================================================================
+// Loading List Extractions (AI audit trail - raw output)
+// ============================================================================
 
-    // Extraction status: success, warning, error
-    status: text("status", { enum: ["success", "warning", "error"] }).notNull(),
-    message: text("message"),
-
-    // Extracted data (JSON)
-    activities: jsonb("activities").notNull().$type<ActivityJson[]>(),
-    lineItems: jsonb("line_items").notNull().$type<LineItemJson[]>(),
-    summary: jsonb("summary").notNull().$type<ExtractionSummaryJson>(),
-
-    // Extraction metadata
-    model: text("model"),
-    inputTokens: integer("input_tokens"),
-    outputTokens: integer("output_tokens"),
-    totalCost: real("total_cost"), // USD
-
-    extractedAt: timestamp("extracted_at", { withTimezone: true, mode: "string" })
-      .notNull()
-      .defaultNow(),
-  }
-);
-
-// JSON types for extraction results (matches simplified Zod schema)
-export type ActivityJson = {
+// JSON types for raw extraction results (what AI returned)
+export type RawActivityJson = {
   activityCode: string;
 };
 
-export type LineItemJson = {
+export type RawLineItemJson = {
   activityCode: string;
   primaryCode: string;
   secondaryCode?: string;
@@ -166,18 +141,99 @@ export type ExtractionSummaryJson = {
   totalLineItems: number;
 };
 
-export type LoadingListExtractionResult =
-  typeof loadingListExtractionResults.$inferSelect;
-export type NewLoadingListExtractionResult =
-  typeof loadingListExtractionResults.$inferInsert;
+// Loading list extractions (raw AI output - audit trail)
+export const loadingListExtractions = pgTable("loading_list_extractions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  groupId: uuid("group_id")
+    .notNull()
+    .references(() => employeeCaptureGroups.id, { onDelete: "cascade" }),
 
-// Extraction results relations
-export const loadingListExtractionResultsRelations = relations(
-  loadingListExtractionResults,
+  // Extraction status: success, warning, error
+  status: text("status", { enum: ["success", "warning", "error"] }).notNull(),
+  message: text("message"),
+
+  // Raw extracted data (JSON) - what AI returned, unvalidated
+  rawActivities: jsonb("raw_activities").notNull().$type<RawActivityJson[]>(),
+  rawLineItems: jsonb("raw_line_items").notNull().$type<RawLineItemJson[]>(),
+  summary: jsonb("summary").notNull().$type<ExtractionSummaryJson>(),
+
+  // Extraction metadata
+  model: text("model"),
+  inputTokens: integer("input_tokens"),
+  outputTokens: integer("output_tokens"),
+  totalCost: real("total_cost"), // USD
+
+  extractedAt: timestamp("extracted_at", { withTimezone: true, mode: "string" })
+    .notNull()
+    .defaultNow(),
+});
+
+export type LoadingListExtraction = typeof loadingListExtractions.$inferSelect;
+export type NewLoadingListExtraction = typeof loadingListExtractions.$inferInsert;
+
+// ============================================================================
+// Loading List Items (extracted line items)
+// ============================================================================
+
+// Source of item: extraction or manual entry
+export const loadingListItemSource = ["extraction", "manual"] as const;
+
+// Loading list items - all extracted line items (no catalog validation)
+export const loadingListItems = pgTable("loading_list_items", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  groupId: uuid("group_id")
+    .notNull()
+    .references(() => employeeCaptureGroups.id, { onDelete: "cascade" }),
+  extractionId: uuid("extraction_id").references(() => loadingListExtractions.id, {
+    onDelete: "set null",
+  }),
+
+  // Item data from extraction
+  activityCode: text("activity_code").notNull(),
+  productCode: text("product_code").notNull(),
+  description: text("description"), // From AI extraction
+  quantity: integer("quantity").notNull().default(1),
+
+  // Source tracking
+  source: text("source", { enum: loadingListItemSource })
+    .notNull()
+    .default("extraction"),
+
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+    .notNull()
+    .defaultNow(),
+});
+
+export type LoadingListItem = typeof loadingListItems.$inferSelect;
+export type NewLoadingListItem = typeof loadingListItems.$inferInsert;
+
+// ============================================================================
+// Loading List Relations
+// ============================================================================
+
+// Extraction relations
+export const loadingListExtractionsRelations = relations(
+  loadingListExtractions,
+  ({ one, many }) => ({
+    group: one(employeeCaptureGroups, {
+      fields: [loadingListExtractions.groupId],
+      references: [employeeCaptureGroups.id],
+    }),
+    items: many(loadingListItems),
+  })
+);
+
+// Item relations
+export const loadingListItemsRelations = relations(
+  loadingListItems,
   ({ one }) => ({
     group: one(employeeCaptureGroups, {
-      fields: [loadingListExtractionResults.groupId],
+      fields: [loadingListItems.groupId],
       references: [employeeCaptureGroups.id],
+    }),
+    extraction: one(loadingListExtractions, {
+      fields: [loadingListItems.extractionId],
+      references: [loadingListExtractions.id],
     }),
   })
 );

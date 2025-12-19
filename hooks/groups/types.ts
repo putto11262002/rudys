@@ -1,14 +1,16 @@
 import type {
   EmployeeCaptureGroup,
   LoadingListImage,
-  LoadingListExtractionResult,
+  LoadingListExtraction,
+  LoadingListItem,
 } from "@/lib/db/schema";
 
 /**
- * Group with related images and extraction result
+ * Group with related images, extraction, and items
  * This matches the shape returned by the API
  */
 export type GroupWithImages = EmployeeCaptureGroup & {
   images: LoadingListImage[];
-  extractionResult: LoadingListExtractionResult | null;
+  extraction: LoadingListExtraction | null;
+  items: LoadingListItem[];
 };

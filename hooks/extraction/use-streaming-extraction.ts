@@ -31,16 +31,17 @@ interface GroupsQueryData {
       width: number | null;
       height: number | null;
     }>;
-    extractionResult: {
+    extraction: {
       id: string;
       groupId: string;
       status: "success" | "warning" | "error";
       message: string | null;
-      activities: Array<{ activityCode: string }>;
-      lineItems: Array<{
+      rawActivities: Array<{ activityCode: string }>;
+      rawLineItems: Array<{
         activityCode: string;
         primaryCode: string;
         quantity: number;
+        description?: string;
       }>;
       summary: {
         totalImages: number;
@@ -49,6 +50,16 @@ interface GroupsQueryData {
         totalLineItems: number;
       };
     } | null;
+    items: Array<{
+      id: string;
+      groupId: string;
+      extractionId: string | null;
+      activityCode: string;
+      productCode: string;
+      description: string | null;
+      quantity: number;
+      source: "extraction" | "manual";
+    }>;
   }>;
 }
 
@@ -85,19 +96,34 @@ export function useStreamingExtraction({
               groups: oldData.groups.map((group) => {
                 if (group.id !== groupId) return group;
 
-                // Update this group with extraction result
+                // Determine group status
+                const groupStatus =
+                  finalObject.status === "error" ? "needs_attention" : "extracted";
+
+                // Update this group with extraction result and all items
                 return {
                   ...group,
-                  status: finalObject.status === "error" ? "needs_attention" : "extracted",
-                  extractionResult: {
-                    id: crypto.randomUUID(), // Temporary ID, will be replaced on next server fetch
+                  status: groupStatus,
+                  extraction: {
+                    id: crypto.randomUUID(), // Temporary ID
                     groupId,
                     status: finalObject.status,
                     message: finalObject.message ?? null,
-                    activities: finalObject.activities,
-                    lineItems: finalObject.lineItems,
+                    rawActivities: finalObject.activities,
+                    rawLineItems: finalObject.lineItems,
                     summary: finalObject.summary,
                   },
+                  // All items from extraction (no validation)
+                  items: finalObject.lineItems.map((item) => ({
+                    id: crypto.randomUUID(),
+                    groupId,
+                    extractionId: null, // Will be set by server
+                    activityCode: item.activityCode,
+                    productCode: item.primaryCode,
+                    description: item.description ?? null,
+                    quantity: item.quantity,
+                    source: "extraction" as const,
+                  })),
                 } as typeof group;
               }),
             };

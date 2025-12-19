@@ -28,14 +28,36 @@ export const orderRoutes = new Hono()
           return c.json({ error: "Session not found" }, 404);
         }
 
-        // Compute demand from groups (not from snapshot)
+        // Get groups with extraction and items
         const groups = await db.query.employeeCaptureGroups.findMany({
           where: eq(employeeCaptureGroups.sessionId, sessionId),
           with: {
-            extractionResult: true,
+            extraction: true,
+            items: true,
           },
         });
-        const demandItems = computeDemandFromGroups(groups);
+
+        // Transform to GroupForComputation format
+        const groupsForComputation = groups.map((group) => ({
+          id: group.id,
+          employeeLabel: group.employeeLabel,
+          extraction: group.extraction
+            ? {
+                status: group.extraction.status,
+                rawActivities: group.extraction.rawActivities,
+                summary: group.extraction.summary,
+                totalCost: group.extraction.totalCost,
+              }
+            : null,
+          items: group.items.map((item) => ({
+            productCode: item.productCode,
+            quantity: item.quantity,
+            activityCode: item.activityCode,
+            description: item.description,
+          })),
+        }));
+
+        const demandItems = computeDemandFromGroups(groupsForComputation);
 
         // Get stations
         const stations = await db.query.stationCaptures.findMany({

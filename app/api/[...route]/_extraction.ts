@@ -4,33 +4,62 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import {
   employeeCaptureGroups,
-  loadingListExtractionResults,
+  loadingListExtractions,
+  loadingListItems,
 } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { safeExtractLoadingList } from "@/lib/ai/extract-loading-list";
 import type { LoadingListExtraction } from "@/lib/ai/schemas/loading-list-extraction";
 
 /**
- * Save extraction result to database
+ * Save extraction result and all items to database (no catalog validation)
  */
-async function saveExtractionResult(
+async function saveExtraction(
   groupId: string,
   extraction: LoadingListExtraction
-): Promise<void> {
-  // Delete existing extraction result if any (for re-extraction)
+): Promise<{ extractionId: string; itemCount: number }> {
+  // Delete existing extraction and items for this group (for re-extraction)
   await db
-    .delete(loadingListExtractionResults)
-    .where(eq(loadingListExtractionResults.groupId, groupId));
+    .delete(loadingListItems)
+    .where(eq(loadingListItems.groupId, groupId));
+  await db
+    .delete(loadingListExtractions)
+    .where(eq(loadingListExtractions.groupId, groupId));
 
-  // Insert new extraction result
-  await db.insert(loadingListExtractionResults).values({
-    groupId,
-    status: extraction.status,
-    message: extraction.message,
-    activities: extraction.activities,
-    lineItems: extraction.lineItems,
-    summary: extraction.summary,
-  });
+  // Insert extraction record (raw AI output for audit)
+  const [insertedExtraction] = await db
+    .insert(loadingListExtractions)
+    .values({
+      groupId,
+      status: extraction.status,
+      message: extraction.message,
+      rawActivities: extraction.activities,
+      rawLineItems: extraction.lineItems,
+      summary: extraction.summary,
+    })
+    .returning({ id: loadingListExtractions.id });
+
+  const extractionId = insertedExtraction.id;
+
+  // Insert ALL items (no catalog validation)
+  if (extraction.lineItems.length > 0) {
+    await db.insert(loadingListItems).values(
+      extraction.lineItems.map((item) => ({
+        groupId,
+        extractionId,
+        activityCode: item.activityCode,
+        productCode: item.primaryCode,
+        description: item.description,
+        quantity: item.quantity,
+        source: "extraction" as const,
+      }))
+    );
+  }
+
+  return {
+    extractionId,
+    itemCount: extraction.lineItems.length,
+  };
 }
 
 // Define routes with CHAINING (critical for type inference)
@@ -75,14 +104,12 @@ export const extractionRoutes = new Hono()
           return c.json({ error: extractionResult.error }, 500);
         }
 
-        // Persist extraction result
-        await saveExtractionResult(groupId, extractionResult.data);
+        // Save extraction (all items, no validation)
+        const { itemCount } = await saveExtraction(groupId, extractionResult.data);
 
-        // Update group status based on extraction status
+        // Determine group status
         const newStatus =
-          extractionResult.data.status === "error"
-            ? "needs_attention"
-            : "extracted";
+          extractionResult.data.status === "error" ? "needs_attention" : "extracted";
 
         await db
           .update(employeeCaptureGroups)
@@ -95,6 +122,7 @@ export const extractionRoutes = new Hono()
             status: extractionResult.data.status,
             message: extractionResult.data.message,
             summary: extractionResult.data.summary,
+            itemCount,
           },
         });
       } catch (error) {
@@ -110,21 +138,34 @@ export const extractionRoutes = new Hono()
       const { groupId } = c.req.valid("param");
 
       try {
-        const result = await db.query.loadingListExtractionResults.findFirst({
-          where: eq(loadingListExtractionResults.groupId, groupId),
+        // Get extraction with items
+        const extraction = await db.query.loadingListExtractions.findFirst({
+          where: eq(loadingListExtractions.groupId, groupId),
+          with: {
+            items: true,
+          },
         });
 
-        if (!result) {
+        if (!extraction) {
           return c.json({ result: null });
         }
 
         return c.json({
           result: {
-            status: result.status,
-            message: result.message,
-            activities: result.activities,
-            lineItems: result.lineItems,
-            summary: result.summary,
+            id: extraction.id,
+            status: extraction.status,
+            message: extraction.message,
+            rawActivities: extraction.rawActivities,
+            summary: extraction.summary,
+            // All extracted items
+            items: extraction.items.map((item) => ({
+              id: item.id,
+              activityCode: item.activityCode,
+              productCode: item.productCode,
+              description: item.description,
+              quantity: item.quantity,
+              source: item.source,
+            })),
           },
         });
       } catch (error) {

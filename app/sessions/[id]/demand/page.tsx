@@ -68,12 +68,12 @@ export default function DemandPage({ params }: DemandPageProps) {
     sources: item.sources,
   }));
 
-  // Check for extraction warnings/errors
+  // Check for extraction warnings/errors (new schema uses 'extraction')
   const groupsWithWarnings = groups.filter(
-    (g) => g.extractionResult?.status === "warning"
+    (g) => g.extraction?.status === "warning"
   );
   const groupsWithErrors = groups.filter(
-    (g) => g.extractionResult?.status === "error"
+    (g) => g.extraction?.status === "error"
   );
 
   // Get stats from API response
@@ -131,8 +131,8 @@ export default function DemandPage({ params }: DemandPageProps) {
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <div className="text-2xl font-bold">{stats?.totalLineItems ?? 0}</div>
-            <div className="text-sm text-muted-foreground">Line Items</div>
+            <div className="text-2xl font-bold">{stats?.totalItems ?? 0}</div>
+            <div className="text-sm text-muted-foreground">Items</div>
           </CardContent>
         </Card>
         <Card>
