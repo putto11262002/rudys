@@ -638,133 +638,127 @@ npm run db:migrate
 ---
 
 ## Product Catalog + Coverage Defaults Refactoring
-### Status: Complete
+### Status: Complete (Updated: Catalog Dependency Removed)
 
 ### Overview
 
 **IMPORTANT: This refactoring diverges from the original specs.**
 
-Added a static product catalog and changed coverage/order calculation to use catalog defaults when stations are not captured.
+~~Added a static product catalog and changed coverage/order calculation to use catalog defaults when stations are not captured.~~
 
-| Aspect | Before (Spec) | After (Implementation) |
-|--------|---------------|------------------------|
-| Product data source | Extracted from sign images only | Static catalog + sign extraction |
-| Min/Max values | Required from station capture | Falls back to catalog if not captured |
-| On-hand quantity | Required from station capture | Defaults to 0 if not captured |
-| Coverage blocking | All demanded products need valid stations | Products in catalog can proceed without capture |
-| Station images | Required (sign + stock) | Optional (can use catalog defaults) |
+**UPDATE:** The product catalog was incomplete and could not be relied upon for validation. The catalog dependency has been **removed entirely**. All extracted products are now valid, and stations use pessimistic defaults when not captured.
 
-### Rationale
+| Aspect | Original Spec | With Catalog (Removed) | Current Implementation |
+|--------|---------------|------------------------|------------------------|
+| Product validation | N/A | Validated against catalog | No validation - all extracted items valid |
+| Product description | From extraction | From catalog | From AI extraction |
+| Min/Max values | Required from station | Falls back to catalog | Defaults: min=0, max=demand |
+| On-hand quantity | Required from station | Defaults to 0 | Defaults to 0 |
+| Coverage blocking | All products need stations | Products in catalog can proceed | Always can proceed |
+| Rejected items | N/A | Products not in catalog | Removed - no rejection |
 
-The original spec required capturing every demanded product's station sign and stock photos. In practice:
-- Many products have known min/max values in a catalog
-- Station capture is time-consuming for large orders
-- Default to on-hand = 0 is conservative (orders full demand)
-- Users can still capture stations for accurate on-hand counts
+### Current Behavior (No Catalog Dependency)
 
-### New Files
+**Extraction:**
+- All extracted line items are saved to `loading_list_items`
+- Description comes from AI extraction, not catalog lookup
+- No validation against product catalog
+- No rejected items concept
+
+**Order Computation:**
+- Products WITH station capture: use actual on-hand, min, max from station
+- Products WITHOUT station capture: use pessimistic defaults
+  - `onHandQty = 0` (assume nothing on hand)
+  - `minQty = 0`
+  - `maxQty = demandQty` (cap at demand)
+  - `recommendedOrderQty = demandQty` (order exactly what's needed)
+
+**Coverage:**
+- `canProceed` is always `true` - can compute orders with defaults
+- Coverage percentage is a **data quality metric**, not a blocker
+- `covered` = products with station captures (accurate data)
+- `missing` = products using defaults (less accurate)
+
+### Static Product Catalog (Reference Only)
+
+The product catalog still exists at `lib/products/catalog.ts` for reference purposes (viewing on `/products` page) but is **not used** in any computation or validation logic.
 
 **Product Catalog:** `lib/products/catalog.ts`
 - `Product` type: `{ articleNumber, description, minQty, maxQty }`
-- `PRODUCT_CATALOG` - Static array of 112 products (from products_en.csv)
-- `PRODUCT_BY_CODE` - Map for O(1) lookup by article number
-- `getProduct(articleNumber)` - Helper function
+- `PRODUCT_CATALOG` - Static array of 112 products
+- `getProduct(articleNumber)` - Helper function (unused in computation)
 
 **Product Catalog Page:** `app/products/page.tsx`
-- Table view of all products with Article Number, Description, Min, Max
+- Table view of all products (reference only)
 - Accessible from home page via "Catalog" button
+
+### Database Schema Changes
+
+**Added:**
+- `loading_list_items.description` - Description from AI extraction
+
+**Removed:**
+- `loading_list_rejected_items` table - No rejection concept
+- `loadingListExtractionsRelations.rejectedItems` - Removed relation
+- `employeeCaptureGroupsRelations.rejectedItems` - Removed relation
 
 ### Type Changes
 
-**Coverage Item:** `hooks/stations/types.ts`
+**GroupForComputation:** `lib/workflow/compute.ts`
 ```typescript
-export type CoverageItem = {
-  productCode: string;
-  productDescription?: string;  // NEW: from catalog
-  demandQty: number;
-  isCaptured: boolean;          // RENAMED: from hasValidStation
-  stationId?: string;
-  onHandQty: number;            // CHANGED: always a number (0 for uncaptured)
-  minQty: number | null;        // From station OR catalog
-  maxQty: number | null;        // From station OR catalog
+export type GroupForComputation = {
+  id: string;
+  employeeLabel: string | null;
+  extraction: { ... } | null;
+  items: Array<{
+    productCode: string;
+    quantity: number;
+    activityCode: string;
+    description: string | null;  // From AI extraction
+  }>;
+  // REMOVED: rejectedItems
 };
 ```
 
-**Order Item:** `hooks/order/types.ts`
+**ExtractionStats:** `lib/workflow/compute.ts`
 ```typescript
-export type OrderItem = {
-  productCode: string;
-  productDescription?: string;  // NEW: from catalog
-  demandQty: number;
-  onHandQty: number;
-  minQty: number | null;
-  maxQty: number | null;
-  recommendedOrderQty: number;
-  exceedsMax: boolean;
-  isCaptured: boolean;          // NEW: derived field
+export type ExtractionStats = {
+  totalGroups: number;
+  extractedGroups: number;
+  errorGroups: number;
+  warningGroups: number;
+  totalActivities: number;
+  totalItems: number;      // RENAMED from totalValidItems
+  // REMOVED: totalRejectedItems
+  totalCost: number;
 };
 ```
 
-### `isCaptured` Derived Field
-
-The `isCaptured` field is **derived, not stored**. It's computed by checking:
-```typescript
-const isCaptured = !!(
-  station?.signBlobUrl && station?.stockBlobUrl &&
-  station.status === "valid" &&
-  station.onHandQty !== null &&
-  station.maxQty !== null
-);
-```
-
-- `isCaptured: true` → Station captured with images, use station data
-- `isCaptured: false` → No station or no images, use catalog defaults (on-hand = 0)
-
-### API Changes
-
-**Coverage API:** `app/api/[...route]/_stations.ts`
-- Uses `getProduct()` to look up catalog data
-- Falls back to catalog min/max if no valid station
-- Sets `onHandQty = 0` for uncaptured products
-- `canProceed` now allows products with catalog data (not just stations)
-
-**Order Computation:** `lib/workflow/compute.ts`
-- `computeOrderItems()` falls back to catalog if no valid station
-- `computeCoverage()` considers products covered if in catalog OR captured
-
-### UI Changes
-
-**Coverage Summary:** `app/sessions/[id]/inventory/_components/coverage-summary.tsx`
-- Renamed from "Coverage" to "Demanded Products"
-- Table with columns: Status, Product, On Hand
-- Status badge: "Captured" (green) or "Default" (secondary with warning icon)
-- Removed progress bar and legend
-
-**Order Page:** `app/sessions/[id]/order/page.tsx`
-- Removed skipped items warning (no longer needed with catalog fallback)
-- Reverted to original simple design (warning icon only for exceeds max)
-
-**Home Page:** `app/page.tsx`
-- Added "Catalog" button linking to `/products`
-
-### Files Modified
+### Files Modified (Catalog Removal)
 
 | File | Change |
 |------|--------|
-| `lib/products/catalog.ts` | **Created** - Static product catalog |
-| `app/products/page.tsx` | **Created** - Catalog page |
-| `app/page.tsx` | Added catalog link |
-| `hooks/stations/types.ts` | Added `isCaptured`, `productDescription` |
-| `hooks/order/types.ts` | Added `isCaptured`, `productDescription` |
-| `app/api/[...route]/_stations.ts` | Catalog fallback in coverage API |
-| `lib/workflow/compute.ts` | Catalog fallback in order computation |
-| `app/sessions/[id]/inventory/_components/coverage-summary.tsx` | Table with badges |
-| `app/sessions/[id]/order/page.tsx` | Removed skipped warning, simplified |
+| `lib/db/schema.ts` | Added description to items, removed rejected items table |
+| `lib/workflow/compute.ts` | Removed catalog imports, use item.description, pessimistic defaults |
+| `app/api/[...route]/_extraction.ts` | Save all items without validation |
+| `app/api/extract-stream/route.ts` | Save all items without validation |
+| `app/api/[...route]/_stations.ts` | Removed catalog fallback, use pessimistic defaults |
+| `app/api/[...route]/_groups.ts` | Removed rejectedItems from queries |
+| `app/api/[...route]/_demand.ts` | Removed rejectedItems, added description |
+| `app/api/[...route]/_order.ts` | Removed rejectedItems, added description |
+| `hooks/extraction/use-streaming-extraction.ts` | Removed validation, cache all items |
+| `hooks/groups/types.ts` | Removed rejectedItems from GroupWithImages |
+| `app/sessions/[id]/loading-lists/_components/group-card.tsx` | Removed rejected items UI |
+| `app/sessions/[id]/demand/page.tsx` | Changed totalValidItems to totalItems |
+| `scripts/seed-stations.ts` | Removed rejectedItems, added description |
 
-### Removed Files
+### Migration Required
 
-- `products.csv` - Dutch version (data now in TypeScript)
-- `products_en.csv` - English version (data now in TypeScript)
+Run database migration to apply schema changes:
+```bash
+npm run db:generate  # Interactive - generates migration
+npm run db:push      # Or push directly (development)
+```
 ## Streaming Extraction Persistence Fix
 ### Status: Complete
 

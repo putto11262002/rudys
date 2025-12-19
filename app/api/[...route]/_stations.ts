@@ -7,7 +7,6 @@ import { eq, desc } from "drizzle-orm";
 import { put, del } from "@vercel/blob";
 import { safeExtractStation } from "@/lib/ai/extract-station";
 import type { StationExtraction } from "@/lib/ai/schemas/station-extraction";
-import { getProduct } from "@/lib/products/catalog";
 
 /**
  * Maps extraction status to station capture status
@@ -276,26 +275,41 @@ export const stationRoutes = new Hono()
       const { sessionId } = c.req.valid("param");
 
       try {
-        // Get all groups with extraction results to compute demand
+        // Get all groups with items
         const groups = await db.query.employeeCaptureGroups.findMany({
           where: eq(
             (await import("@/lib/db/schema")).employeeCaptureGroups.sessionId,
             sessionId,
           ),
           with: {
-            extractionResult: true,
+            extraction: true,
+            items: true,
           },
         });
 
-        // Aggregate demand from extraction results
-        const demandMap = new Map<string, number>();
+        // Aggregate demand from extracted items (with description)
+        const demandMap = new Map<
+          string,
+          { qty: number; description: string | null }
+        >();
         for (const group of groups) {
-          if (!group.extractionResult) continue;
-          if (group.extractionResult.status === "error") continue;
+          if (!group.extraction) continue;
+          if (group.extraction.status === "error") continue;
 
-          for (const lineItem of group.extractionResult.lineItems) {
-            const existing = demandMap.get(lineItem.primaryCode) || 0;
-            demandMap.set(lineItem.primaryCode, existing + lineItem.quantity);
+          for (const item of group.items) {
+            const existing = demandMap.get(item.productCode);
+            if (existing) {
+              existing.qty += item.quantity;
+              // Keep first non-null description
+              if (!existing.description && item.description) {
+                existing.description = item.description;
+              }
+            } else {
+              demandMap.set(item.productCode, {
+                qty: item.quantity,
+                description: item.description,
+              });
+            }
           }
         }
 
@@ -304,10 +318,10 @@ export const stationRoutes = new Hono()
           where: eq(stationCaptures.sessionId, sessionId),
         });
 
-        // Build coverage map with catalog fallbacks
+        // Build coverage map with pessimistic defaults for uncaptured products
         const coverage = Array.from(demandMap.entries()).map(
-          ([productCode, demandQty]) => {
-            // Find station with images (isCaptured = has sign and stock images)
+          ([productCode, { qty: demandQty, description }]) => {
+            // Find valid station with complete data
             const matchingStation = stations.find(
               (s) =>
                 s.productCode === productCode &&
@@ -316,44 +330,40 @@ export const stationRoutes = new Hono()
                 s.maxQty !== null,
             );
 
-            const catalogProduct = getProduct(productCode);
             // isCaptured: station exists AND has images uploaded
             const isCaptured = !!(
               matchingStation?.signBlobUrl && matchingStation?.stockBlobUrl
             );
 
+            // For uncaptured products: use pessimistic defaults
+            // onHand=0, min=0, max=demand (order exactly what's needed)
             return {
               productCode,
-              productDescription: catalogProduct?.description,
+              productDescription: description, // From AI extraction
               demandQty,
               isCaptured,
               stationId: matchingStation?.id,
-              // If captured, use station values; otherwise default to 0
               onHandQty: isCaptured ? (matchingStation.onHandQty ?? 0) : 0,
-              // Prefer station values, fall back to catalog
-              minQty: matchingStation?.minQty ?? catalogProduct?.minQty ?? null,
-              maxQty: matchingStation?.maxQty ?? catalogProduct?.maxQty ?? null,
+              minQty: matchingStation?.minQty ?? 0,
+              maxQty: matchingStation?.maxQty ?? demandQty,
             };
           },
         );
 
-        // Can proceed if all products have either a captured station OR exist in catalog
-        const canProceed = coverage.every(
-          (c) => c.isCaptured || (c.minQty !== null && c.maxQty !== null)
-        );
+        // Can always proceed - uncaptured products use defaults
         const coveredCount = coverage.filter((c) => c.isCaptured).length;
         const totalCount = coverage.length;
 
         return c.json({
           coverage,
           summary: {
-            canProceed,
+            canProceed: true, // Always can proceed with defaults
             coveredCount,
             totalCount,
             percentage:
               totalCount > 0
                 ? Math.round((coveredCount / totalCount) * 100)
-                : 0,
+                : 100,
           },
         });
       } catch (error) {

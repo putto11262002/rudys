@@ -2,7 +2,8 @@ import { streamObject } from "ai";
 import { db } from "@/lib/db";
 import {
   employeeCaptureGroups,
-  loadingListExtractionResults,
+  loadingListExtractions,
+  loadingListItems,
 } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import {
@@ -53,29 +54,59 @@ interface ExtractionMetadata {
 }
 
 /**
- * Save extraction result to database with metadata
+ * Save extraction result and all items to database (no catalog validation)
  */
-async function saveExtractionResult(
+async function saveExtraction(
   groupId: string,
   extraction: LoadingListExtraction,
   metadata: ExtractionMetadata
-): Promise<void> {
+): Promise<{ extractionId: string; itemCount: number }> {
+  // Delete existing extraction and items for this group (for re-extraction)
   await db
-    .delete(loadingListExtractionResults)
-    .where(eq(loadingListExtractionResults.groupId, groupId));
+    .delete(loadingListItems)
+    .where(eq(loadingListItems.groupId, groupId));
+  await db
+    .delete(loadingListExtractions)
+    .where(eq(loadingListExtractions.groupId, groupId));
 
-  await db.insert(loadingListExtractionResults).values({
-    groupId,
-    status: extraction.status,
-    message: extraction.message,
-    activities: extraction.activities,
-    lineItems: extraction.lineItems,
-    summary: extraction.summary,
-    model: metadata.model,
-    inputTokens: metadata.inputTokens,
-    outputTokens: metadata.outputTokens,
-    totalCost: metadata.totalCost,
-  });
+  // Insert extraction record (raw AI output for audit)
+  const [insertedExtraction] = await db
+    .insert(loadingListExtractions)
+    .values({
+      groupId,
+      status: extraction.status,
+      message: extraction.message,
+      rawActivities: extraction.activities,
+      rawLineItems: extraction.lineItems,
+      summary: extraction.summary,
+      model: metadata.model,
+      inputTokens: metadata.inputTokens,
+      outputTokens: metadata.outputTokens,
+      totalCost: metadata.totalCost,
+    })
+    .returning({ id: loadingListExtractions.id });
+
+  const extractionId = insertedExtraction.id;
+
+  // Insert ALL items (no catalog validation)
+  if (extraction.lineItems.length > 0) {
+    await db.insert(loadingListItems).values(
+      extraction.lineItems.map((item) => ({
+        groupId,
+        extractionId,
+        activityCode: item.activityCode,
+        productCode: item.primaryCode,
+        description: item.description,
+        quantity: item.quantity,
+        source: "extraction" as const,
+      }))
+    );
+  }
+
+  return {
+    extractionId,
+    itemCount: extraction.lineItems.length,
+  };
 }
 
 export async function POST(request: Request) {
@@ -150,22 +181,26 @@ export async function POST(request: Request) {
             ? calculateCost(selectedModel, inputTokens, outputTokens)
             : undefined;
 
-        // Persist extraction result with metadata
-        await saveExtractionResult(groupId, finalObject, {
+        // Save extraction (all items, no validation)
+        const { itemCount } = await saveExtraction(groupId, finalObject, {
           model: selectedModel,
           inputTokens,
           outputTokens,
           totalCost,
         });
 
-        // Update group status
-        const newStatus = finalObject.status === "error" ? "needs_attention" : "extracted";
+        // Determine group status
+        const newStatus =
+          finalObject.status === "error" ? "needs_attention" : "extracted";
+
         await db
           .update(employeeCaptureGroups)
           .set({ status: newStatus })
           .where(eq(employeeCaptureGroups.id, groupId));
 
-        console.log(`Extraction persisted for group ${groupId}`);
+        console.log(
+          `Extraction persisted for group ${groupId}: ${itemCount} items`
+        );
       })
       .catch(async (error) => {
         // Handle validation failures or stream errors

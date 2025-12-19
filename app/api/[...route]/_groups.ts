@@ -5,7 +5,8 @@ import { db } from "@/lib/db";
 import {
   employeeCaptureGroups,
   loadingListImages,
-  loadingListExtractionResults,
+  loadingListExtractions,
+  loadingListItems,
 } from "@/lib/db/schema";
 import { eq, desc, asc } from "drizzle-orm";
 import { put, del } from "@vercel/blob";
@@ -26,10 +27,15 @@ async function _invalidateGroupExtraction(groupId: string): Promise<void> {
     return; // Nothing to invalidate
   }
 
-  // Delete extraction result
+  // Delete items first (FK constraint)
   await db
-    .delete(loadingListExtractionResults)
-    .where(eq(loadingListExtractionResults.groupId, groupId));
+    .delete(loadingListItems)
+    .where(eq(loadingListItems.groupId, groupId));
+
+  // Delete extraction
+  await db
+    .delete(loadingListExtractions)
+    .where(eq(loadingListExtractions.groupId, groupId));
 
   // Reset AI classification on images
   await db
@@ -64,7 +70,8 @@ export const groupRoutes = new Hono()
             images: {
               orderBy: [asc(loadingListImages.orderIndex)],
             },
-            extractionResult: true,
+            extraction: true,
+            items: true,
           },
         });
 
@@ -167,7 +174,8 @@ export const groupRoutes = new Hono()
             images: {
               orderBy: [asc(loadingListImages.orderIndex)],
             },
-            extractionResult: true,
+            extraction: true,
+            items: true,
           },
         });
 
@@ -219,7 +227,7 @@ export const groupRoutes = new Hono()
           })
         );
 
-        // Delete the group (cascade deletes images via FK)
+        // Delete the group (cascade deletes images, items, rejected items via FK)
         await db
           .delete(employeeCaptureGroups)
           .where(eq(employeeCaptureGroups.id, id));

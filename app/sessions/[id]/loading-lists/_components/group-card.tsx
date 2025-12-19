@@ -119,7 +119,7 @@ function CollapsibleSection({
 
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
-      <CollapsibleTrigger className="flex items-center justify-between w-full py-2 px-3 bg-muted/50 rounded-lg hover:bg-muted transition-colors">
+      <CollapsibleTrigger className="flex items-center justify-between w-full py-2 px-3 rounded-lg transition-colors bg-muted/50 hover:bg-muted">
         <div className="flex items-center gap-2 text-sm font-medium">
           <Icon className="size-4" />
           {title}
@@ -173,12 +173,6 @@ interface NormalizedExtraction {
   status?: string;
   message?: string | null;
   activities: Array<{ activityCode?: string }>;
-  lineItems: Array<{
-    activityCode?: string;
-    primaryCode?: string;
-    description?: string;
-    quantity?: number;
-  }>;
   summary?: {
     totalActivities?: number;
     totalLineItems?: number;
@@ -188,34 +182,38 @@ interface NormalizedExtraction {
   totalCost?: number | null;
 }
 
+// Item type for display
+interface DisplayItem {
+  activityCode: string;
+  productCode: string;
+  quantity: number;
+  description?: string | null;
+}
+
 function ExtractionDataView({
   extraction,
+  items,
   isStreaming = false,
 }: {
   extraction: NormalizedExtraction;
+  items: DisplayItem[];
   isStreaming?: boolean;
 }) {
-  const { status, message, activities = [], lineItems = [] } = extraction;
+  const { status, message, activities = [] } = extraction;
 
-  // Filter out items without required fields
-  const validLineItems = lineItems.filter(
-    (item) => item?.primaryCode && item?.activityCode
-  );
-
-  // Group line items by activity code
-  const itemsByActivity = new Map<string, typeof validLineItems>();
-  for (const item of validLineItems) {
-    const code = item.activityCode!;
-    if (!itemsByActivity.has(code)) {
-      itemsByActivity.set(code, []);
+  // Group items by activity code
+  const itemsByActivity = new Map<string, DisplayItem[]>();
+  for (const item of items) {
+    if (!itemsByActivity.has(item.activityCode)) {
+      itemsByActivity.set(item.activityCode, []);
     }
-    itemsByActivity.get(code)!.push(item);
+    itemsByActivity.get(item.activityCode)!.push(item);
   }
 
-  // Get all activity codes (from both activities array and line items)
+  // Get all activity codes (from both activities array and items)
   const allActivityCodes = new Set([
     ...activities.filter((a) => a?.activityCode).map((a) => a.activityCode!),
-    ...validLineItems.map((i) => i.activityCode!),
+    ...items.map((i) => i.activityCode),
   ]);
 
   return (
@@ -242,7 +240,7 @@ function ExtractionDataView({
       {allActivityCodes.size > 0 && (
         <div className="space-y-3 max-h-64 overflow-y-auto">
           {Array.from(allActivityCodes).map((activityCode) => {
-            const items = itemsByActivity.get(activityCode) ?? [];
+            const activityItems = itemsByActivity.get(activityCode) ?? [];
 
             return (
               <div key={activityCode} className="space-y-1">
@@ -252,9 +250,9 @@ function ExtractionDataView({
                 </div>
 
                 {/* Line items for this activity */}
-                {items.length > 0 ? (
+                {activityItems.length > 0 ? (
                   <div className="space-y-1 pl-3 border-l-2 border-muted">
-                    {items.map((item, idx) => (
+                    {activityItems.map((item, idx) => (
                       <div
                         key={idx}
                         className={cn(
@@ -264,7 +262,7 @@ function ExtractionDataView({
                       >
                         <div className="flex items-center gap-2">
                           <Package className="size-3 text-muted-foreground" />
-                          <span className="font-mono">{item.primaryCode}</span>
+                          <span className="font-mono">{item.productCode}</span>
                           {item.description && (
                             <span className="text-muted-foreground truncate max-w-32">
                               {item.description}
@@ -272,7 +270,7 @@ function ExtractionDataView({
                           )}
                         </div>
                         <Badge variant="secondary" className="text-xs">
-                          x{item.quantity ?? 1}
+                          x{item.quantity}
                         </Badge>
                       </div>
                     ))}
@@ -289,14 +287,14 @@ function ExtractionDataView({
       )}
 
       {/* Empty state - only show when not streaming */}
-      {allActivityCodes.size === 0 && !isStreaming && (
+      {allActivityCodes.size === 0 && !isStreaming && items.length === 0 && (
         <p className="text-sm text-muted-foreground text-center py-4">
           No extraction data
         </p>
       )}
 
       {/* Streaming empty state */}
-      {allActivityCodes.size === 0 && isStreaming && (
+      {allActivityCodes.size === 0 && isStreaming && items.length === 0 && (
         <div className="flex items-center justify-center gap-2 py-4 text-sm text-muted-foreground">
           <Loader2 className="size-4 animate-spin" />
           Waiting for data...
@@ -307,7 +305,9 @@ function ExtractionDataView({
       {!isStreaming && (extraction.model || extraction.totalCost !== undefined) && (
         <div className="flex items-center justify-between pt-3 mt-3 border-t text-xs text-muted-foreground">
           {extraction.model && (
-            <span className="font-mono">{extraction.model.split("/")[1] ?? extraction.model}</span>
+            <span className="font-mono">
+              {extraction.model.split("/")[1] ?? extraction.model}
+            </span>
           )}
           {extraction.totalCost !== undefined && extraction.totalCost !== null && (
             <span>${extraction.totalCost.toFixed(4)}</span>
@@ -327,29 +327,53 @@ export function GroupCard({
 }: GroupCardProps) {
   const isExtracted =
     group.status === "extracted" || group.status === "needs_attention";
-  const hasExtractionResult = group.extractionResult !== null;
+  const hasExtractionResult = group.extraction !== null;
 
-  // Use streaming result during extraction, otherwise use stored result
-  const displayResult = isExtracting && streamingResult ? streamingResult : group.extractionResult;
-  const lineItemCount = displayResult?.lineItems?.filter((i) => i?.primaryCode)?.length ?? 0;
+  // Get items from group
+  const storedItems = group.items ?? [];
+
+  // During streaming, build items from streaming result
+  const streamingItems: DisplayItem[] = [];
+  if (isExtracting && streamingResult?.lineItems) {
+    for (const item of streamingResult.lineItems) {
+      if (!item?.primaryCode || !item?.activityCode) continue;
+      streamingItems.push({
+        activityCode: item.activityCode,
+        productCode: item.primaryCode,
+        quantity: item.quantity ?? 1,
+        description: item.description,
+      });
+    }
+  }
+
+  // Use streaming or stored items
+  const displayItems: DisplayItem[] = isExtracting
+    ? streamingItems
+    : storedItems.map((item) => ({
+        activityCode: item.activityCode,
+        productCode: item.productCode,
+        quantity: item.quantity,
+        description: item.description,
+      }));
+
+  const lineItemCount = displayItems.length;
+
+  // Use streaming result during extraction for activities view, otherwise use stored
+  const displayResult = isExtracting && streamingResult ? streamingResult : group.extraction;
 
   // Normalize the extraction data for display
-  // Note: model and totalCost only exist on stored results, not streaming
-  const storedResult = group.extractionResult;
   const normalizedExtraction: NormalizedExtraction | null = displayResult
     ? {
         status: displayResult.status,
         message: displayResult.message,
-        activities: (displayResult.activities ?? []) as Array<{ activityCode?: string }>,
-        lineItems: (displayResult.lineItems ?? []) as Array<{
-          activityCode?: string;
-          primaryCode?: string;
-          description?: string;
-          quantity?: number;
-        }>,
+        activities: (
+          (displayResult as typeof group.extraction)?.rawActivities ??
+          (displayResult as DeepPartial<LoadingListExtraction>).activities ??
+          []
+        ) as Array<{ activityCode?: string }>,
         summary: displayResult.summary as NormalizedExtraction["summary"],
-        model: storedResult?.model,
-        totalCost: storedResult?.totalCost,
+        model: group.extraction?.model,
+        totalCost: group.extraction?.totalCost,
       }
     : null;
 
@@ -363,7 +387,9 @@ export function GroupCard({
           </span>
           <StatusBadge
             groupStatus={group.status}
-            extractionStatus={group.extractionResult?.status as "success" | "warning" | "error" | undefined}
+            extractionStatus={
+              group.extraction?.status as "success" | "warning" | "error" | undefined
+            }
             isExtracting={isExtracting}
           />
         </CardTitle>
@@ -390,13 +416,14 @@ export function GroupCard({
         {/* Extracted data collapsible - show during extraction with streaming results */}
         {(hasExtractionResult || isExtracting) && normalizedExtraction && (
           <CollapsibleSection
-            title={isExtracting ? "Extracting..." : "Extracted Data"}
+            title={isExtracting ? "Extracting..." : "Extracted Items"}
             icon={FileText}
             defaultOpen={isExtracted || isExtracting}
             count={lineItemCount > 0 ? lineItemCount : undefined}
           >
             <ExtractionDataView
               extraction={normalizedExtraction}
+              items={displayItems}
               isStreaming={isExtracting}
             />
           </CollapsibleSection>

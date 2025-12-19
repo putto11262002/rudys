@@ -29,15 +29,36 @@ async function seedStations(sessionId: string) {
     process.exit(1);
   }
 
-  // Get groups with extraction results to compute demand
+  // Get groups with extraction and items
   const groups = await db.query.employeeCaptureGroups.findMany({
     where: eq(employeeCaptureGroups.sessionId, sessionId),
     with: {
-      extractionResult: true,
+      extraction: true,
+      items: true,
     },
   });
 
-  const demandItems = computeDemandFromGroups(groups);
+  // Transform to GroupForComputation format
+  const groupsForComputation = groups.map((group) => ({
+    id: group.id,
+    employeeLabel: group.employeeLabel,
+    extraction: group.extraction
+      ? {
+          status: group.extraction.status,
+          rawActivities: group.extraction.rawActivities,
+          summary: group.extraction.summary,
+          totalCost: group.extraction.totalCost,
+        }
+      : null,
+    items: group.items.map((item) => ({
+      productCode: item.productCode,
+      quantity: item.quantity,
+      activityCode: item.activityCode,
+      description: item.description,
+    })),
+  }));
+
+  const demandItems = computeDemandFromGroups(groupsForComputation);
 
   if (demandItems.length === 0) {
     console.error("No demand items found for this session.");
