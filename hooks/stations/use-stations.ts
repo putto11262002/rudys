@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { client } from "@/lib/api/client";
 import { stationKeys } from "./query-keys";
 import { sessionKeys } from "../sessions";
+import { orderKeys } from "../order/query-keys";
 import type { CoverageResponse } from "./types";
 
 // ============================================================================
@@ -110,6 +111,10 @@ export function useCreateStation() {
       queryClient.invalidateQueries({
         queryKey: sessionKeys.detail(sessionId),
       });
+      // Invalidate order since it depends on stations
+      queryClient.invalidateQueries({
+        queryKey: orderKeys.bySession(sessionId),
+      });
     },
   });
 }
@@ -146,6 +151,10 @@ export function useDeleteStation() {
       // Also invalidate session detail
       queryClient.invalidateQueries({
         queryKey: sessionKeys.detail(sessionId),
+      });
+      // Invalidate order since it depends on stations
+      queryClient.invalidateQueries({
+        queryKey: orderKeys.bySession(sessionId),
       });
     },
   });

@@ -4,6 +4,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { client } from "@/lib/api/client";
 import { groupKeys } from "./query-keys";
 import { sessionKeys } from "../sessions";
+import { demandKeys } from "../demand/query-keys";
+import { orderKeys } from "../order/query-keys";
 
 // ============================================================================
 // Queries
@@ -68,6 +70,13 @@ export function useCreateGroupWithImages() {
       queryClient.invalidateQueries({
         queryKey: sessionKeys.detail(sessionId),
       });
+      // Invalidate demand and order since they depend on groups
+      queryClient.invalidateQueries({
+        queryKey: demandKeys.bySession(sessionId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: orderKeys.bySession(sessionId),
+      });
     },
   });
 }
@@ -97,6 +106,13 @@ export function useDeleteGroup() {
       // Also invalidate session detail since it might show group count
       queryClient.invalidateQueries({
         queryKey: sessionKeys.detail(sessionId),
+      });
+      // Invalidate demand and order since they depend on groups
+      queryClient.invalidateQueries({
+        queryKey: demandKeys.bySession(sessionId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: orderKeys.bySession(sessionId),
       });
     },
   });
