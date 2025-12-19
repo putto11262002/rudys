@@ -1,11 +1,13 @@
 export type OrderItem = {
   productCode: string;
+  productDescription?: string;
   demandQty: number;
   onHandQty: number;
   minQty: number | null;
   maxQty: number | null;
   recommendedOrderQty: number;
   exceedsMax: boolean;
+  isCaptured: boolean; // Derived: true if station exists with images
 };
 
 export type SkippedOrderItem = {

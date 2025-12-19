@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Plus, FolderOpen, Loader2 } from "lucide-react";
+import { Plus, FolderOpen, Loader2, Package } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -88,17 +88,25 @@ export default function HomePage() {
             Manage your loading list capture sessions
           </p>
         </div>
-        <Button
-          onClick={handleCreateSession}
-          disabled={createSession.isPending}
-        >
-          {createSession.isPending ? (
-            <Loader2 className="size-4 mr-2 animate-spin" />
-          ) : (
-            <Plus className="size-4 mr-2" />
-          )}
-          New Session
-        </Button>
+        <div className="flex gap-2">
+          <Button asChild variant="outline">
+            <Link href="/products">
+              <Package className="size-4 mr-2" />
+              Catalog
+            </Link>
+          </Button>
+          <Button
+            onClick={handleCreateSession}
+            disabled={createSession.isPending}
+          >
+            {createSession.isPending ? (
+              <Loader2 className="size-4 mr-2 animate-spin" />
+            ) : (
+              <Plus className="size-4 mr-2" />
+            )}
+            New Session
+          </Button>
+        </div>
       </div>
 
       {isLoading ? (
