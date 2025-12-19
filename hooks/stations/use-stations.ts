@@ -59,7 +59,92 @@ export function useCoverage(sessionId: string) {
 // ============================================================================
 
 /**
- * Creates a new station with sign and stock images
+ * Phase 1: Create a pending station with "uploading" status (instant)
+ * Returns immediately with stationId, form can clear and user can add next item
+ */
+export function useCreatePendingStation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ sessionId }: { sessionId: string }) => {
+      const res = await client.api.sessions[":sessionId"].stations["create-pending"].$post({
+        param: { sessionId },
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(
+          "error" in error ? error.error : "Failed to create station"
+        );
+      }
+      return res.json();
+    },
+    onSuccess: (_data, { sessionId }) => {
+      // Invalidate to show the new "uploading" station in the list
+      queryClient.invalidateQueries({
+        queryKey: stationKeys.listBySession(sessionId),
+      });
+    },
+  });
+}
+
+/**
+ * Phase 2: Upload images to an existing station (can run in background)
+ * Updates station status from "uploading" to "pending" when complete
+ */
+export function useUploadStationImages() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      stationId,
+      sessionId,
+      signImage,
+      stockImage,
+    }: {
+      stationId: string;
+      sessionId: string;
+      signImage: {
+        name: string;
+        type: string;
+        base64: string;
+        width: number;
+        height: number;
+      };
+      stockImage: {
+        name: string;
+        type: string;
+        base64: string;
+        width: number;
+        height: number;
+      };
+    }) => {
+      const res = await client.api.stations[":stationId"]["upload-images"].$post({
+        param: { stationId },
+        json: { signImage, stockImage },
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(
+          "error" in error ? error.error : "Failed to upload images"
+        );
+      }
+      return res.json();
+    },
+    onSuccess: (_data, { sessionId }) => {
+      // Invalidate to update the station's status and images
+      queryClient.invalidateQueries({
+        queryKey: stationKeys.listBySession(sessionId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: stationKeys.coverage(sessionId),
+      });
+    },
+  });
+}
+
+/**
+ * Legacy: Creates a new station with sign and stock images in one request
+ * @deprecated Use useCreatePendingStation + useUploadStationImages for better UX
  */
 export function useCreateStation() {
   const queryClient = useQueryClient();

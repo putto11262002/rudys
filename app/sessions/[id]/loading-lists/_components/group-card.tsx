@@ -12,6 +12,7 @@ import {
   FileText,
   Loader2,
   Package,
+  Upload,
 } from "lucide-react";
 import {
   Card,
@@ -55,6 +56,16 @@ function StatusBadge({
   extractionStatus?: "success" | "warning" | "error" | null;
   isExtracting?: boolean;
 }) {
+  // Uploading status (images being uploaded in background)
+  if (groupStatus === "uploading") {
+    return (
+      <Badge variant="info">
+        <Upload className="size-3 mr-1 animate-pulse" />
+        Uploading
+      </Badge>
+    );
+  }
+
   if (isExtracting) {
     return (
       <Badge variant="info">
@@ -300,6 +311,7 @@ export function GroupCard({
   streamingResult,
   onRerunExtraction,
 }: GroupCardProps) {
+  const isUploading = group.status === "uploading";
   const isExtracted =
     group.status === "extracted" || group.status === "needs_attention";
   const hasExtractionResult = group.extraction !== null;
@@ -369,47 +381,58 @@ export function GroupCard({
             sessionId={sessionId}
             onRerunExtraction={onRerunExtraction ?? (() => {})}
             isExtracting={isExtracting}
+            isUploading={isUploading}
           />
         </CardAction>
       </CardHeader>
       <CardContent className="space-y-3">
-        {/* Images collapsible */}
-        <CollapsibleSection
-          title="Images"
-          icon={ImageIcon}
-          defaultOpen={!isExtracted && !isExtracting}
-          count={group.images.length}
-        >
-          <ImageGrid images={group.images} />
-        </CollapsibleSection>
+        {/* Uploading state - show centered message */}
+        {isUploading ? (
+          <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+            <Upload className="size-4 animate-pulse" />
+            Uploading images...
+          </div>
+        ) : (
+          <>
+            {/* Images collapsible */}
+            <CollapsibleSection
+              title="Images"
+              icon={ImageIcon}
+              defaultOpen={!isExtracted && !isExtracting}
+              count={group.images.length}
+            >
+              <ImageGrid images={group.images} />
+            </CollapsibleSection>
 
-        {/* Extracted data collapsible - always show section, content varies by state */}
-        <CollapsibleSection
-          title={isExtracting ? "Extracting..." : "Extracted Items"}
-          icon={FileText}
-          defaultOpen={isExtracted || isExtracting}
-          count={lineItemCount > 0 ? lineItemCount : undefined}
-        >
-          {/* Has extraction data or streaming */}
-          {(hasExtractionResult || isExtracting) && normalizedExtraction ? (
-            <ExtractionDataView
-              extraction={normalizedExtraction}
-              items={displayItems}
-              isStreaming={isExtracting}
-            />
-          ) : isExtracting && !normalizedExtraction ? (
-            /* Extracting state without any streaming data yet */
-            <div className="flex items-center justify-center gap-2 py-4 text-sm text-muted-foreground">
-              <Loader2 className="size-4 animate-spin" />
-              Starting extraction...
-            </div>
-          ) : (
-            /* Empty state - no extraction yet */
-            <p className="text-sm text-muted-foreground text-center py-4">
-              No extraction data
-            </p>
-          )}
-        </CollapsibleSection>
+            {/* Extracted data collapsible - always show section, content varies by state */}
+            <CollapsibleSection
+              title={isExtracting ? "Extracting..." : "Extracted Items"}
+              icon={FileText}
+              defaultOpen={isExtracted || isExtracting}
+              count={lineItemCount > 0 ? lineItemCount : undefined}
+            >
+              {/* Has extraction data or streaming */}
+              {(hasExtractionResult || isExtracting) && normalizedExtraction ? (
+                <ExtractionDataView
+                  extraction={normalizedExtraction}
+                  items={displayItems}
+                  isStreaming={isExtracting}
+                />
+              ) : isExtracting && !normalizedExtraction ? (
+                /* Extracting state without any streaming data yet */
+                <div className="flex items-center justify-center gap-2 py-4 text-sm text-muted-foreground">
+                  <Loader2 className="size-4 animate-spin" />
+                  Starting extraction...
+                </div>
+              ) : (
+                /* Empty state - no extraction yet */
+                <p className="text-sm text-muted-foreground text-center py-4">
+                  No extraction data
+                </p>
+              )}
+            </CollapsibleSection>
+          </>
+        )}
       </CardContent>
     </Card>
   );
