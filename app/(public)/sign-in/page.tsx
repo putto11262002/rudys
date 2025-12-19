@@ -1,17 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, Lock } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { useLogin } from "@/hooks/auth";
+import { loginAction } from "@/lib/auth/actions";
 
 export default function SignInPage() {
   const router = useRouter();
-  const login = useLogin();
+  const [isPending, startTransition] = useTransition();
   const [code, setCode] = useState("");
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -22,15 +22,15 @@ export default function SignInPage() {
       return;
     }
 
-    login.mutate(code, {
-      onSuccess: () => {
+    startTransition(async () => {
+      const result = await loginAction(code);
+
+      if (result.success) {
         toast.success("Welcome!");
         router.push("/");
-        router.refresh();
-      },
-      onError: (error) => {
-        toast.error(error.message);
-      },
+      } else {
+        toast.error(result.error);
+      }
     });
   };
 
@@ -50,15 +50,15 @@ export default function SignInPage() {
               placeholder="Access code"
               value={code}
               onChange={(e) => setCode(e.target.value)}
-              disabled={login.isPending}
+              disabled={isPending}
               autoFocus
             />
             <Button
               type="submit"
               className="w-full"
-              disabled={login.isPending || !code.trim()}
+              disabled={isPending || !code.trim()}
             >
-              {login.isPending ? (
+              {isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin mr-2" />
               ) : null}
               Sign In

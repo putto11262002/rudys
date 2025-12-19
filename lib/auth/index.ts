@@ -15,3 +15,5 @@ export {
 } from "./constants";
 
 export { authMiddleware } from "./middleware";
+
+export { loginAction, logoutAction } from "./actions";
