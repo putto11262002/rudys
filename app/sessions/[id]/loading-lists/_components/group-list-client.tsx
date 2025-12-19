@@ -132,7 +132,7 @@ export function GroupListClient({
                 if (extractingGroupId !== null) return;
                 setExtractingGroupId(group.id);
                 // Use same model as previous extraction, or fallback to default
-                const modelToUse = group.extractionResult?.model ?? DEFAULT_MODEL_ID;
+                const modelToUse = group.extraction?.model ?? DEFAULT_MODEL_ID;
                 extract(group.id, modelToUse);
               }}
             />
