@@ -1,11 +1,13 @@
 "use client";
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { upload } from "@vercel/blob/client";
 import { client } from "@/lib/api/client";
 import { groupKeys } from "./query-keys";
 import { sessionKeys } from "../sessions";
 import { demandKeys } from "../demand/query-keys";
 import { orderKeys } from "../order/query-keys";
+import type { LoadingListImage, EmployeeCaptureGroup } from "@/lib/db/schema";
 
 // ============================================================================
 // Queries
@@ -87,9 +89,10 @@ async function getImageDimensions(file: File): Promise<{ width: number; height: 
 }
 
 /**
- * Phase 2: Upload images to an existing group (can run in background)
- * Updates group status from "uploading" to "pending" when complete
- * Uses FormData for efficient file upload (avoids base64 bloat)
+ * Phase 2: Upload images via Vercel Blob client upload with optimistic updates
+ * - Uploads directly to Vercel Blob (bypasses server body limit)
+ * - Optimistically updates React Query cache for instant UI
+ * - onUploadCompleted webhook persists to DB in background
  */
 export function useUploadGroupImages() {
   const queryClient = useQueryClient();
@@ -107,33 +110,69 @@ export function useUploadGroupImages() {
       // Get dimensions for all images first
       const dimensions = await Promise.all(images.map(getImageDimensions));
 
-      // Use FormData for efficient file upload
-      const formData = new FormData();
-      images.forEach((file, index) => {
-        formData.append(`image_${index}`, file);
-        formData.append(`width_${index}`, dimensions[index].width.toString());
-        formData.append(`height_${index}`, dimensions[index].height.toString());
-      });
+      // Upload all images in parallel via client upload
+      const uploadResults = await Promise.all(
+        images.map(async (file, index) => {
+          const ext = file.name.split(".").pop() || "jpg";
+          const pathname = `sessions/${sessionId}/groups/${groupId}/${index}.${ext}`;
 
-      const res = await fetch(`/api/groups/${groupId}/upload-images`, {
-        method: "POST",
-        body: formData,
-        // Don't set Content-Type - browser sets it automatically with boundary
-      });
+          const result = await upload(pathname, file, {
+            access: "public",
+            handleUploadUrl: "/api/blob/group-images",
+            clientPayload: JSON.stringify({
+              groupId,
+              sessionId,
+              index,
+              width: dimensions[index].width,
+              height: dimensions[index].height,
+              totalImages: images.length,
+            }),
+          });
 
-      if (!res.ok) {
-        const error = await res.json();
-        throw new Error(
-          "error" in error ? error.error : "Failed to upload images"
-        );
-      }
-      return res.json();
+          return {
+            url: result.url,
+            index,
+            width: dimensions[index].width,
+            height: dimensions[index].height,
+          };
+        })
+      );
+
+      return { uploadResults, groupId, sessionId };
     },
-    onSuccess: (_data, { sessionId }) => {
-      // Invalidate to update the group's status and images
-      queryClient.invalidateQueries({
-        queryKey: groupKeys.listBySession(sessionId),
-      });
+    onSuccess: ({ uploadResults, groupId, sessionId }) => {
+      // Optimistically update the cache with uploaded images
+      queryClient.setQueryData(
+        groupKeys.listBySession(sessionId),
+        (oldData: { groups: (EmployeeCaptureGroup & { images: LoadingListImage[] })[] } | undefined) => {
+          if (!oldData) return oldData;
+
+          return {
+            ...oldData,
+            groups: oldData.groups.map((group) => {
+              if (group.id !== groupId) return group;
+
+              // Build optimistic images array
+              const optimisticImages: Partial<LoadingListImage>[] = uploadResults.map((r) => ({
+                id: crypto.randomUUID(), // Temporary ID
+                groupId,
+                blobUrl: r.url,
+                captureType: "uploaded_file" as const,
+                orderIndex: r.index,
+                width: r.width,
+                height: r.height,
+                uploadedAt: new Date().toISOString(),
+              }));
+
+              return {
+                ...group,
+                status: "pending" as const,
+                images: optimisticImages as LoadingListImage[],
+              };
+            }),
+          };
+        }
+      );
     },
   });
 }

@@ -82,7 +82,7 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { stationId, model } = body;
+  const { stationId, model, signImageUrl: providedSignUrl, stockImageUrl: providedStockUrl } = body;
 
   // Validate UUID
   const uuidRegex =
@@ -96,7 +96,7 @@ export async function POST(request: Request) {
     model && VALID_MODELS.includes(model) ? model : DEFAULT_MODEL;
 
   try {
-    // Get station with image URLs
+    // Verify station exists
     const station = await db.query.stationCaptures.findFirst({
       where: eq(stationCaptures.id, stationId),
     });
@@ -105,7 +105,17 @@ export async function POST(request: Request) {
       return Response.json({ error: "Station not found" }, { status: 404 });
     }
 
-    if (!station.signBlobUrl || !station.stockBlobUrl) {
+    // Use provided image URLs (from client upload) or fallback to DB lookup (for re-extraction)
+    let signBlobUrl: string;
+    let stockBlobUrl: string;
+
+    if (providedSignUrl && providedStockUrl) {
+      signBlobUrl = providedSignUrl;
+      stockBlobUrl = providedStockUrl;
+    } else if (station.signBlobUrl && station.stockBlobUrl) {
+      signBlobUrl = station.signBlobUrl;
+      stockBlobUrl = station.stockBlobUrl;
+    } else {
       return Response.json(
         { error: "Station must have both sign and stock images" },
         { status: 400 }
@@ -118,9 +128,9 @@ export async function POST(request: Request) {
     > = [
       { type: "text", text: STATION_USER_PROMPT },
       { type: "text", text: "Image A (SIGN):" },
-      { type: "image", image: station.signBlobUrl },
+      { type: "image", image: signBlobUrl },
       { type: "text", text: "Image B (STOCK):" },
-      { type: "image", image: station.stockBlobUrl },
+      { type: "image", image: stockBlobUrl },
     ];
 
     // Stream the object generation

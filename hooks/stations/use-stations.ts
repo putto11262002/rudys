@@ -1,11 +1,31 @@
 "use client";
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { upload } from "@vercel/blob/client";
 import { client } from "@/lib/api/client";
 import { stationKeys } from "./query-keys";
 import { sessionKeys } from "../sessions";
 import { orderKeys } from "../order/query-keys";
 import type { CoverageResponse } from "./types";
+import type { StationCapture } from "@/lib/db/schema";
+
+/**
+ * Helper to get image dimensions from a File
+ */
+async function getImageDimensions(file: File): Promise<{ width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(img.src);
+      resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(img.src);
+      reject(new Error("Failed to load image"));
+    };
+    img.src = URL.createObjectURL(file);
+  });
+}
 
 // ============================================================================
 // Queries
@@ -89,9 +109,10 @@ export function useCreatePendingStation() {
 }
 
 /**
- * Phase 2: Upload images to an existing station (can run in background)
- * Updates station status from "uploading" to "pending" when complete
- * Uses FormData for efficient file upload (avoids base64 bloat)
+ * Phase 2: Upload images via Vercel Blob client upload with optimistic updates
+ * - Uploads directly to Vercel Blob (bypasses server body limit)
+ * - Optimistically updates React Query cache for instant UI
+ * - onUploadCompleted webhook persists to DB in background
  */
 export function useUploadStationImages() {
   const queryClient = useQueryClient();
@@ -108,33 +129,80 @@ export function useUploadStationImages() {
       signImage: File;
       stockImage: File;
     }) => {
-      // Use FormData for efficient file upload
-      const formData = new FormData();
-      formData.append("signImage", signImage);
-      formData.append("stockImage", stockImage);
+      // Get dimensions for both images
+      const [signDimensions, stockDimensions] = await Promise.all([
+        getImageDimensions(signImage),
+        getImageDimensions(stockImage),
+      ]);
 
-      const res = await fetch(`/api/stations/${stationId}/upload-images`, {
-        method: "POST",
-        body: formData,
-        // Don't set Content-Type - browser sets it automatically with boundary
-      });
+      // Upload both images in parallel via client upload
+      const signExt = signImage.name.split(".").pop() || "jpg";
+      const stockExt = stockImage.name.split(".").pop() || "jpg";
 
-      if (!res.ok) {
-        const error = await res.json();
-        throw new Error(
-          "error" in error ? error.error : "Failed to upload images"
-        );
-      }
-      return res.json();
+      const [signResult, stockResult] = await Promise.all([
+        upload(`sessions/${sessionId}/stations/${stationId}/sign.${signExt}`, signImage, {
+          access: "public",
+          handleUploadUrl: "/api/blob/station-images",
+          clientPayload: JSON.stringify({
+            stationId,
+            sessionId,
+            imageType: "sign",
+            width: signDimensions.width,
+            height: signDimensions.height,
+          }),
+        }),
+        upload(`sessions/${sessionId}/stations/${stationId}/stock.${stockExt}`, stockImage, {
+          access: "public",
+          handleUploadUrl: "/api/blob/station-images",
+          clientPayload: JSON.stringify({
+            stationId,
+            sessionId,
+            imageType: "stock",
+            width: stockDimensions.width,
+            height: stockDimensions.height,
+          }),
+        }),
+      ]);
+
+      return {
+        stationId,
+        sessionId,
+        signUrl: signResult.url,
+        stockUrl: stockResult.url,
+        signDimensions,
+        stockDimensions,
+      };
     },
-    onSuccess: (_data, { sessionId }) => {
-      // Invalidate to update the station's status and images
-      queryClient.invalidateQueries({
-        queryKey: stationKeys.listBySession(sessionId),
-      });
-      queryClient.invalidateQueries({
-        queryKey: stationKeys.coverage(sessionId),
-      });
+    onSuccess: ({ stationId, sessionId, signUrl, stockUrl, signDimensions, stockDimensions }) => {
+      const now = new Date().toISOString();
+
+      // Optimistically update the cache with uploaded images
+      queryClient.setQueryData(
+        stationKeys.listBySession(sessionId),
+        (oldData: { stations: StationCapture[] } | undefined) => {
+          if (!oldData) return oldData;
+
+          return {
+            ...oldData,
+            stations: oldData.stations.map((station) => {
+              if (station.id !== stationId) return station;
+
+              return {
+                ...station,
+                status: "pending" as const,
+                signBlobUrl: signUrl,
+                signWidth: signDimensions.width,
+                signHeight: signDimensions.height,
+                signUploadedAt: now,
+                stockBlobUrl: stockUrl,
+                stockWidth: stockDimensions.width,
+                stockHeight: stockDimensions.height,
+                stockUploadedAt: now,
+              };
+            }),
+          };
+        }
+      );
     },
   });
 }
@@ -251,14 +319,18 @@ export function useExtractStation() {
     mutationFn: async ({
       id,
       modelId,
+      signImageUrl,
+      stockImageUrl,
     }: {
       id: string;
       sessionId: string;
       modelId?: string;
+      signImageUrl?: string;
+      stockImageUrl?: string;
     }) => {
       const res = await client.api.stations[":id"].extract.$post({
         param: { id },
-        json: { modelId },
+        json: { modelId, signImageUrl, stockImageUrl },
       });
       if (!res.ok) {
         const error = await res.json();

@@ -320,10 +320,14 @@ export const stationRoutes = new Hono()
   .post(
     "/stations/:id/extract",
     zValidator("param", z.object({ id: z.string().uuid() })),
-    zValidator("json", z.object({ modelId: z.string().optional() })),
+    zValidator("json", z.object({
+      modelId: z.string().optional(),
+      signImageUrl: z.string().optional(),
+      stockImageUrl: z.string().optional(),
+    })),
     async (c) => {
       const { id } = c.req.valid("param");
-      const { modelId } = c.req.valid("json");
+      const { modelId, signImageUrl, stockImageUrl } = c.req.valid("json");
 
       try {
         const station = await db.query.stationCaptures.findFirst({
@@ -334,7 +338,17 @@ export const stationRoutes = new Hono()
           return c.json({ error: "Station not found" }, 404);
         }
 
-        if (!station.signBlobUrl || !station.stockBlobUrl) {
+        // Use provided URLs (from client upload) or fallback to DB (for re-extraction)
+        let signUrl: string;
+        let stockUrl: string;
+
+        if (signImageUrl && stockImageUrl) {
+          signUrl = signImageUrl;
+          stockUrl = stockImageUrl;
+        } else if (station.signBlobUrl && station.stockBlobUrl) {
+          signUrl = station.signBlobUrl;
+          stockUrl = station.stockBlobUrl;
+        } else {
           return c.json(
             { error: "Station must have both sign and stock images" },
             400,
@@ -343,8 +357,8 @@ export const stationRoutes = new Hono()
 
         // Run AI extraction
         const extractionResult = await safeExtractStation(
-          station.signBlobUrl,
-          station.stockBlobUrl,
+          signUrl,
+          stockUrl,
           modelId,
         );
 

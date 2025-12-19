@@ -67,19 +67,25 @@ export function StationCaptureForm({ sessionId }: StationCaptureFormProps) {
       // Capture modelId in closure - no ref needed
       void (async () => {
         try {
-          // Upload images directly using FormData (no base64 conversion needed)
-          await uploadStationImages.mutateAsync({
+          // Upload images via client upload - returns blob URLs
+          const result = await uploadStationImages.mutateAsync({
             stationId,
             sessionId,
             signImage: signToUpload,
             stockImage: stockToUpload,
           });
 
-          // Upload complete - trigger extraction (non-streaming, simple data)
+          // Upload complete - trigger extraction with URLs (no DB lookup needed)
           toast.success("Images uploaded, extracting...");
 
           extractStation.mutate(
-            { id: stationId, sessionId, modelId },
+            {
+              id: stationId,
+              sessionId,
+              modelId,
+              signImageUrl: result.signUrl,
+              stockImageUrl: result.stockUrl,
+            },
             {
               onSuccess: (extractionData) => {
                 const status = extractionData.extraction?.status;

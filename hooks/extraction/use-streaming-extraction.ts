@@ -157,11 +157,11 @@ export function useStreamingExtraction({
   }, [isLoading]);
 
   const extract = useCallback(
-    (groupId: string, model?: string) => {
+    (groupId: string, model?: string, imageUrls?: string[]) => {
       currentGroupIdRef.current = groupId;
       hasCompletedRef.current = false;
-      // Submit with groupId and optional model in the body
-      submit({ groupId, model });
+      // Submit with groupId, optional model, and optional imageUrls in the body
+      submit({ groupId, model, imageUrls });
     },
     [submit]
   );

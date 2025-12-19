@@ -79,10 +79,10 @@ export function GroupListClient({
   const { data: groupsData } = useGroups(sessionId);
   const groups = groupsData?.groups ?? initialGroups;
 
-  const handleUploadComplete = (groupId: string, modelId: string) => {
-    // Upload finished - start streaming extraction
+  const handleUploadComplete = (groupId: string, modelId: string, imageUrls: string[]) => {
+    // Upload finished - start streaming extraction with URLs from client upload
     setExtractingGroupId(groupId);
-    extract(groupId, modelId);
+    extract(groupId, modelId, imageUrls);
   };
 
   return (

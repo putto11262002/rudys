@@ -12,8 +12,9 @@ interface LoadingListCaptureFormProps {
   /**
    * Called when upload completes and group is ready for extraction.
    * Uses streaming extraction in parent for real-time UI updates.
+   * @param imageUrls - Blob URLs from client upload (passed directly to extraction)
    */
-  onUploadComplete: (groupId: string, modelId: string) => void;
+  onUploadComplete: (groupId: string, modelId: string, imageUrls: string[]) => void;
 }
 
 export function LoadingListCaptureForm({
@@ -61,15 +62,18 @@ export function LoadingListCaptureForm({
       // Capture modelId in closure - no ref needed
       void (async () => {
         try {
-          // Upload images directly using FormData (no base64 conversion needed)
-          await uploadGroupImages.mutateAsync({
+          // Upload images via client upload - returns blob URLs
+          const result = await uploadGroupImages.mutateAsync({
             groupId,
             sessionId,
             images: imagesToUpload,
           });
 
-          // Upload complete - trigger extraction via parent (streaming)
-          onUploadComplete(groupId, modelId);
+          // Extract image URLs from upload result
+          const imageUrls = result.uploadResults.map((r) => r.url);
+
+          // Upload complete - trigger extraction with URLs (no DB lookup needed)
+          onUploadComplete(groupId, modelId, imageUrls);
         } catch (error) {
           toast.error(
             `Upload failed: ${error instanceof Error ? error.message : "Unknown error"}`

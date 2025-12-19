@@ -137,7 +137,7 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { groupId, model } = body;
+  const { groupId, model, imageUrls: providedImageUrls } = body;
 
   // Validate UUID
   const uuidRegex =
@@ -151,7 +151,7 @@ export async function POST(request: Request) {
     model && VALID_MODELS.includes(model) ? model : DEFAULT_MODEL;
 
   try {
-    // Get group with images
+    // Verify group exists
     const group = await db.query.employeeCaptureGroups.findFirst({
       where: eq(employeeCaptureGroups.id, groupId),
       with: {
@@ -165,12 +165,15 @@ export async function POST(request: Request) {
       return Response.json({ error: "Group not found" }, { status: 404 });
     }
 
-    if (group.images.length === 0) {
-      return Response.json({ error: "No images in group" }, { status: 400 });
+    // Use provided imageUrls (from client upload) or fallback to DB lookup (for re-extraction)
+    let imageUrls: string[];
+    if (providedImageUrls && Array.isArray(providedImageUrls) && providedImageUrls.length > 0) {
+      imageUrls = providedImageUrls;
+    } else if (group.images.length > 0) {
+      imageUrls = group.images.map((img) => img.blobUrl);
+    } else {
+      return Response.json({ error: "No images provided or found in group" }, { status: 400 });
     }
-
-    // Get ordered image URLs
-    const imageUrls = group.images.map((img) => img.blobUrl);
 
     // Build content array with text prompt + images
     const content: Array<
