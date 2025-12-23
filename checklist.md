@@ -952,3 +952,101 @@ Session deletion now cleans up **all** blob types:
 4. Hobby plan limit: 2 cron jobs
 
 ---
+
+## Split Station Extraction (Sign + Stock)
+### Status: Complete
+
+### Overview
+
+Refactored station extraction from a single LLM call into two separate parallel calls:
+1. **Sign Extraction** (GPT-4o Mini) - Simple OCR to read product code, min, max
+2. **Stock Counting** (Gemini 2.5 Flash) - Specialized counting with better accuracy
+
+### Key Changes
+
+| Aspect | Before | After |
+|--------|--------|-------|
+| AI Calls | Single call with both images | Two parallel calls |
+| Sign Model | GPT-4o Mini | GPT-4o Mini (unchanged) |
+| Stock Model | GPT-4o Mini | Gemini 2.5 Flash (best for counting) |
+| Product Matching | Validated stock matches sign | Removed - no validation |
+| Stock Output | Just onHandQty | onHandQty + confidence + countingMethod |
+
+### Files Created
+
+| File | Description |
+|------|-------------|
+| `lib/ai/schemas/sign-extraction.ts` | Schema for sign-only extraction |
+| `lib/ai/schemas/stock-counting.ts` | Schema for stock counting with confidence |
+| `lib/ai/extract-sign.ts` | Sign extraction function |
+| `lib/ai/extract-stock-count.ts` | Stock counting function |
+
+### Files Modified
+
+| File | Change |
+|------|--------|
+| `lib/ai/extract-station.ts` | Now orchestrates two parallel calls, combines results |
+| `lib/ai/prompts.ts` | Added `SIGN_EXTRACTION_*` and `STOCK_COUNTING_*` prompts |
+| `lib/ai/models.ts` | Added Gemini 2.5 Flash, `DEFAULT_SIGN_MODEL`, `DEFAULT_COUNTING_MODEL` |
+| `app/api/station-extract-stream/route.ts` | Returns JSON (not streaming), includes detailed results |
+| `app/api/[...route]/_stations.ts` | Supports `signModel` and `stockModel` parameters |
+| `hooks/stations/use-streaming-station-extraction.ts` | Updated for JSON response, exposes `details` |
+
+### New Stock Counting Prompt
+
+The stock counting prompt uses specialized counting strategies:
+- Row counting (count rows, sum)
+- Layer counting (for stacked items)
+- Feature counting (e.g., count wheels ÷ 4 = beds)
+- Direct counting
+
+Outputs include:
+- `onHandQty` - Best count
+- `confidence` - high/medium/low
+- `countingMethod` - How AI counted (for transparency)
+
+### API Response Format
+
+```typescript
+{
+  extraction: {
+    status: "success" | "warning" | "error",
+    message: string | null,
+    productCode: string | null,
+    minQty: number | null,
+    maxQty: number | null,
+    onHandQty: number | null,
+  },
+  details: {
+    sign: {
+      status: "success" | "warning" | "error",
+      message: string | null,
+      productCode: string | null,
+      minQty: number | null,
+      maxQty: number | null,
+      model: string,
+    },
+    stock: {
+      status: "success" | "warning" | "error",
+      message: string | null,
+      onHandQty: number | null,
+      confidence: "high" | "medium" | "low",
+      countingMethod: string,
+      model: string,
+    },
+  },
+}
+```
+
+### Cost Impact
+
+~3x increase per extraction due to using better model for counting:
+- Sign: GPT-4o Mini ($0.15/1M input)
+- Stock: Gemini 2.5 Flash ($0.30/1M input, $2.50/1M output)
+
+### Environment Variables
+
+No new environment variables required. Uses existing:
+- `AI_GATEWAY_API_KEY` - For Vercel AI Gateway (supports both OpenAI and Google)
+
+---

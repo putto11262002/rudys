@@ -316,18 +316,22 @@ export const stationRoutes = new Hono()
       }
     },
   )
-  // Run extraction on station
+  // Run extraction on station (two parallel AI calls: sign + stock)
   .post(
     "/stations/:id/extract",
     zValidator("param", z.object({ id: z.string().uuid() })),
     zValidator("json", z.object({
+      // Legacy: single model for both (backward compatibility)
       modelId: z.string().optional(),
+      // New: separate models for sign and stock
+      signModel: z.string().optional(),
+      stockModel: z.string().optional(),
       signImageUrl: z.string().optional(),
       stockImageUrl: z.string().optional(),
     })),
     async (c) => {
       const { id } = c.req.valid("param");
-      const { modelId, signImageUrl, stockImageUrl } = c.req.valid("json");
+      const { modelId, signModel, stockModel, signImageUrl, stockImageUrl } = c.req.valid("json");
 
       try {
         const station = await db.query.stationCaptures.findFirst({
@@ -355,11 +359,13 @@ export const stationRoutes = new Hono()
           );
         }
 
-        // Run AI extraction
+        // Run AI extraction (two parallel calls)
+        // signModel/stockModel override modelId for backward compatibility
         const extractionResult = await safeExtractStation(
           signUrl,
           stockUrl,
-          modelId,
+          signModel || modelId,
+          stockModel,
         );
 
         if (!extractionResult.success) {
@@ -377,6 +383,8 @@ export const stationRoutes = new Hono()
         const newStatus = mapExtractionStatusToStationStatus(extraction);
 
         // Update station with extraction results
+        // Also persist blob URLs if provided (handles race condition with webhook)
+        const now = new Date().toISOString();
         await db
           .update(stationCaptures)
           .set({
@@ -386,7 +394,10 @@ export const stationRoutes = new Hono()
             maxQty: extraction.maxQty,
             onHandQty: extraction.onHandQty,
             errorMessage: extraction.status !== "success" ? extraction.message : null,
-            extractedAt: new Date().toISOString(),
+            extractedAt: now,
+            // Persist blob URLs if provided (handles race condition with webhook)
+            ...(signImageUrl ? { signBlobUrl: signImageUrl, signUploadedAt: now } : {}),
+            ...(stockImageUrl ? { stockBlobUrl: stockImageUrl, stockUploadedAt: now } : {}),
           })
           .where(eq(stationCaptures.id, id));
 

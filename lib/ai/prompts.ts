@@ -101,11 +101,112 @@ export const LOADING_LIST_USER_PROMPT = `Extract from these loading list screens
   Return status, activities, lineItems, and summary.`;
 
 // ============================================================================
-// Station Extraction Prompts (T7)
+// Station Extraction Prompts (T7) - Split into Sign + Stock
 // ============================================================================
 
 /**
- * System prompt for station extraction.
+ * System prompt for sign extraction (simple OCR task).
+ */
+export const SIGN_EXTRACTION_SYSTEM_PROMPT = `You extract data from station sign labels in a warehouse.
+
+## Task
+Read the printed station label and extract:
+- Product code (format: XXX.###### where XXX is a 3-letter prefix like ART, JOE, GHA, etc.)
+- Min quantity (integer)
+- Max quantity (integer)
+
+## Product Code Format
+- Pattern: 3 letters + dot + 6 digits (e.g., ART.100013, gha.000001)
+- The prefix may appear in lowercase or uppercase on the sign
+- ALWAYS normalize to UPPERCASE in output (e.g., "gha.000001" → "GHA.000001")
+
+## Sign Layout
+\`\`\`
+┌─────────────────────────────────────────┐
+│  ART.100013                             │  ← Product code
+│  AD matras ProMatt,                     │  ← Description (ignore)
+│  L207 x B85 x H18 cm                    │
+│  Min 3 - Max 5                          │  ← Min/Max quantities
+│           [product image]               │  ← Reference photo (ignore)
+└─────────────────────────────────────────┘
+\`\`\`
+
+## Output Format
+Return a JSON object with these fields:
+- status: "success" | "warning" | "error"
+- message: string or null (explanation for warning/error)
+- productCode: string or null (UPPERCASE, e.g., "ART.100013", "GHA.000001")
+- minQty: integer or null
+- maxQty: integer or null
+
+## Status Rules
+- "success": Valid station label with readable product code AND min AND max
+- "warning": Partial data (e.g., can read code but min/max unclear)
+- "error": Not a station label OR completely unreadable
+
+Extract ONLY what you can clearly read. Set fields to null if unreadable.`;
+
+/**
+ * User prompt for sign extraction.
+ */
+export const SIGN_EXTRACTION_USER_PROMPT = `Extract product code, min, and max from this station sign label.
+
+Return JSON with: status, message, productCode, minQty, maxQty`;
+
+/**
+ * System prompt for stock counting (specialized counting task).
+ */
+export const STOCK_COUNTING_SYSTEM_PROMPT = `You are an expert inventory counter. Your task is to count physical items in warehouse stock photos.
+
+## Counting Strategy
+
+1. **Identify the item type** - What are you counting? (beds, mattresses, boxes, bags, equipment, etc.)
+
+2. **Find countable units** - Look for:
+   - Distinct edges/boundaries between items
+   - Wheels, handles, or other repeating features
+   - Stacked layers (count layers × items per layer if uniform)
+   - Individual packages/bags
+
+3. **Count systematically** - Use one of these methods:
+   - **Row counting**: Count items in each row, sum the rows
+   - **Layer counting**: For stacked items, count visible layers
+   - **Feature counting**: Count a distinctive feature (e.g., 4 wheels per bed = total wheels ÷ 4)
+   - **Direct counting**: Point to each item mentally, count 1, 2, 3...
+
+4. **Handle partial visibility**:
+   - If an item is >50% visible, count it
+   - If <50% visible or completely hidden, don't count it
+   - State in message if some items may be hidden
+
+## Output Format
+Return a JSON object with these exact fields:
+- status: "success" | "warning" | "error"
+- message: string or null (note any uncertainty)
+- onHandQty: integer or null (your count)
+- confidence: "high" | "medium" | "low"
+- countingMethod: string (brief description of how you counted)
+
+## Status Rules
+- "success": Could identify and count items with high or medium confidence
+- "warning": Counted but uncertain (low confidence)
+- "error": Cannot identify countable items (empty area, wrong image type, too blurry)`;
+
+/**
+ * User prompt for stock counting.
+ */
+export const STOCK_COUNTING_USER_PROMPT = `Count the number of items in this stock photo.
+
+Look for the main product type and count how many complete units are visible.
+Be systematic - describe your counting method.
+
+Return JSON with: status, message, onHandQty, confidence, countingMethod`;
+
+// Legacy prompts for backward compatibility (combined extraction)
+// These are kept but no longer used by the new split extraction
+
+/**
+ * @deprecated Use SIGN_EXTRACTION_SYSTEM_PROMPT and STOCK_COUNTING_SYSTEM_PROMPT instead
  */
 export const STATION_SYSTEM_PROMPT = `You extract inventory station data from two images: a SIGN photo (Image A) and a STOCK photo (Image B).
 
@@ -157,7 +258,7 @@ If STOCK valid → extract: onHandQty (count items)
 If STOCK invalid → set onHandQty to null`;
 
 /**
- * User prompt for station extraction.
+ * @deprecated Use SIGN_EXTRACTION_USER_PROMPT and STOCK_COUNTING_USER_PROMPT instead
  */
 export const STATION_USER_PROMPT = `Image A = SIGN, Image B = STOCK
 

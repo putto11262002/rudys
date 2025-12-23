@@ -1,12 +1,8 @@
 "use client";
 
-import { experimental_useObject as useObject } from "@ai-sdk/react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useRef, useEffect } from "react";
-import {
-  StationExtractionSchema,
-  type StationExtraction,
-} from "@/lib/ai/schemas/station-extraction";
+import { useCallback, useRef, useState } from "react";
+import { type StationExtraction } from "@/lib/ai/schemas/station-extraction";
 import { stationKeys } from "./query-keys";
 import { orderKeys } from "../order/query-keys";
 
@@ -21,7 +17,7 @@ interface StationsQueryData {
   stations: Array<{
     id: string;
     sessionId: string;
-    status: "pending" | "valid" | "needs_attention" | "failed";
+    status: "uploading" | "pending" | "valid" | "needs_attention" | "failed";
     signBlobUrl: string | null;
     signWidth: number | null;
     signHeight: number | null;
@@ -40,6 +36,29 @@ interface StationsQueryData {
   }>;
 }
 
+// Response type from the extraction endpoint
+interface ExtractionResponse {
+  extraction: StationExtraction;
+  details: {
+    sign: {
+      status: "success" | "warning" | "error";
+      message?: string | null;
+      productCode?: string | null;
+      minQty?: number | null;
+      maxQty?: number | null;
+      model: string;
+    };
+    stock: {
+      status: "success" | "warning" | "error";
+      message?: string | null;
+      onHandQty?: number | null;
+      confidence?: "high" | "medium" | "low";
+      countingMethod?: string;
+      model: string;
+    };
+  };
+}
+
 /**
  * Maps extraction status to station capture status
  */
@@ -56,8 +75,10 @@ function mapExtractionStatusToStationStatus(
 }
 
 /**
- * Hook for streaming station extraction using useObject from @ai-sdk/react.
- * Provides real-time partial results as the AI generates them.
+ * Hook for station extraction using two parallel AI calls:
+ * 1. Sign extraction (GPT-4o Mini) - reads product code, min, max
+ * 2. Stock counting (Gemini 2.5 Flash) - counts items in stock photo
+ *
  * Updates React Query cache directly when complete (no refetch needed).
  */
 export function useStreamingStationExtraction({
@@ -67,17 +88,55 @@ export function useStreamingStationExtraction({
 }: UseStreamingStationExtractionOptions) {
   const queryClient = useQueryClient();
   const currentStationIdRef = useRef<string | null>(null);
-  const hasCompletedRef = useRef(false);
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [result, setResult] = useState<ExtractionResponse | null>(null);
+  const [error, setError] = useState<Error | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
-  const { object, submit, isLoading, error, stop } = useObject({
-    api: "/api/station-extract-stream",
-    schema: StationExtractionSchema,
-    onFinish: (event) => {
-      const stationId = currentStationIdRef.current;
-      const finalObject = event.object as StationExtraction | undefined;
+  const extract = useCallback(
+    async (
+      stationId: string,
+      options?: {
+        signModel?: string;
+        stockModel?: string;
+        signImageUrl?: string;
+        stockImageUrl?: string;
+      }
+    ) => {
+      currentStationIdRef.current = stationId;
+      setIsExtracting(true);
+      setError(null);
+      setResult(null);
 
-      if (stationId && finalObject) {
-        // Update the stations cache directly with the streamed extraction result
+      // Cancel any previous request
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      abortControllerRef.current = new AbortController();
+
+      try {
+        const response = await fetch("/api/station-extract-stream", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            stationId,
+            signModel: options?.signModel,
+            stockModel: options?.stockModel,
+            signImageUrl: options?.signImageUrl,
+            stockImageUrl: options?.stockImageUrl,
+          }),
+          signal: abortControllerRef.current.signal,
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || "Extraction failed");
+        }
+
+        const data: ExtractionResponse = await response.json();
+        setResult(data);
+
+        // Update the stations cache directly with the extraction result
         queryClient.setQueryData<StationsQueryData>(
           stationKeys.listBySession(sessionId),
           (oldData) => {
@@ -91,14 +150,14 @@ export function useStreamingStationExtraction({
                 // Update this station with extraction result
                 return {
                   ...station,
-                  status: mapExtractionStatusToStationStatus(finalObject),
-                  productCode: finalObject.productCode ?? null,
-                  minQty: finalObject.minQty ?? null,
-                  maxQty: finalObject.maxQty ?? null,
-                  onHandQty: finalObject.onHandQty ?? null,
+                  status: mapExtractionStatusToStationStatus(data.extraction),
+                  productCode: data.extraction.productCode ?? null,
+                  minQty: data.extraction.minQty ?? null,
+                  maxQty: data.extraction.maxQty ?? null,
+                  onHandQty: data.extraction.onHandQty ?? null,
                   errorMessage:
-                    finalObject.status !== "success"
-                      ? finalObject.message ?? null
+                    data.extraction.status !== "success"
+                      ? data.extraction.message ?? null
                       : null,
                   extractedAt: new Date().toISOString(),
                 };
@@ -108,7 +167,6 @@ export function useStreamingStationExtraction({
         );
 
         // Also invalidate coverage since extraction changes coverage status
-        // Coverage depends on server-side computation, so we need to refetch
         queryClient.invalidateQueries({
           queryKey: stationKeys.coverage(sessionId),
         });
@@ -117,40 +175,41 @@ export function useStreamingStationExtraction({
         queryClient.invalidateQueries({
           queryKey: orderKeys.bySession(sessionId),
         });
+
+        onComplete?.();
+      } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") {
+          // Request was cancelled, don't treat as error
+          return;
+        }
+        const error = err instanceof Error ? err : new Error("Unknown error");
+        setError(error);
+        onError?.(error);
+      } finally {
+        setIsExtracting(false);
       }
-
-      hasCompletedRef.current = true;
-      onComplete?.();
     },
-    onError: (err) => {
-      onError?.(err);
-    },
-  });
-
-  // Reset completion flag when starting new extraction
-  useEffect(() => {
-    if (isLoading) {
-      hasCompletedRef.current = false;
-    }
-  }, [isLoading]);
-
-  const extract = useCallback(
-    (stationId: string, model?: string) => {
-      currentStationIdRef.current = stationId;
-      hasCompletedRef.current = false;
-      // Submit with stationId and optional model in the body
-      submit({ stationId, model });
-    },
-    [submit]
+    [sessionId, queryClient, onComplete, onError]
   );
 
+  const stop = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      setIsExtracting(false);
+    }
+  }, []);
+
   return {
-    /** Partial extraction result (updates as stream progresses) */
-    partialResult: object,
-    /** Whether extraction is currently streaming */
-    isExtracting: isLoading,
-    /** Whether extraction has completed */
-    isComplete: hasCompletedRef.current,
+    /** Final extraction result (null while extracting) */
+    result,
+    /** Combined extraction result for backward compatibility */
+    partialResult: result?.extraction ?? null,
+    /** Detailed results from both sign and stock extraction */
+    details: result?.details ?? null,
+    /** Whether extraction is currently running */
+    isExtracting,
+    /** Whether extraction has completed successfully */
+    isComplete: result !== null && !isExtracting,
     /** Start extraction for a station */
     extract,
     /** Stop the current extraction */

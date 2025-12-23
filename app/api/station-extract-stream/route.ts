@@ -1,40 +1,17 @@
-import { streamObject } from "ai";
 import { db } from "@/lib/db";
 import { stationCaptures } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
-import {
-  StationExtractionSchema,
-  type StationExtraction,
-} from "@/lib/ai/schemas/station-extraction";
-import { STATION_SYSTEM_PROMPT, STATION_USER_PROMPT } from "@/lib/ai/prompts";
+import { type StationExtraction } from "@/lib/ai/schemas/station-extraction";
+import { extractStationDetailed } from "@/lib/ai/extract-station";
 import { validateSessionFromCookie } from "@/lib/auth";
 import {
-  DEFAULT_STATION_MODEL,
+  DEFAULT_SIGN_MODEL,
+  DEFAULT_COUNTING_MODEL,
   VALID_MODEL_IDS,
   calculateCost,
 } from "@/lib/ai/models";
 
 export const maxDuration = 60;
-
-/**
- * Safely parse JSON that may be truncated/malformed.
- * Returns null if parsing fails completely.
- */
-function safeParseExtraction(jsonString: string): StationExtraction | null {
-  try {
-    const parsed = JSON.parse(jsonString);
-    // Validate with zod schema
-    const result = StationExtractionSchema.safeParse(parsed);
-    if (result.success) {
-      return result.data;
-    }
-    console.warn("Station extraction validation failed:", result.error.message);
-    return null;
-  } catch {
-    console.warn("Failed to parse station extraction JSON");
-    return null;
-  }
-}
 
 /**
  * Maps extraction status to station capture status
@@ -51,6 +28,14 @@ function mapExtractionStatusToStationStatus(
   return "needs_attention"; // warning
 }
 
+/**
+ * Station extraction endpoint using two separate AI calls:
+ * 1. Sign extraction (GPT-4o Mini) - reads product code, min, max
+ * 2. Stock counting (Gemini 2.5 Flash) - counts items in stock photo
+ *
+ * Both calls run in parallel for speed. Results are combined and persisted.
+ * Returns JSON response (not streaming) since we're running parallel calls.
+ */
 export async function POST(request: Request) {
   const isValid = validateSessionFromCookie(request.headers.get("cookie"));
   if (!isValid) {
@@ -58,7 +43,13 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { stationId, model, signImageUrl: providedSignUrl, stockImageUrl: providedStockUrl } = body;
+  const {
+    stationId,
+    signModel,
+    stockModel,
+    signImageUrl: providedSignUrl,
+    stockImageUrl: providedStockUrl,
+  } = body;
 
   // Validate UUID
   const uuidRegex =
@@ -67,9 +58,11 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid station ID" }, { status: 400 });
   }
 
-  // Validate model (use default if not provided or invalid)
-  const selectedModel =
-    model && VALID_MODEL_IDS.includes(model) ? model : DEFAULT_STATION_MODEL;
+  // Validate models (use defaults if not provided or invalid)
+  const selectedSignModel =
+    signModel && VALID_MODEL_IDS.includes(signModel) ? signModel : DEFAULT_SIGN_MODEL;
+  const selectedStockModel =
+    stockModel && VALID_MODEL_IDS.includes(stockModel) ? stockModel : DEFAULT_COUNTING_MODEL;
 
   try {
     // Verify station exists
@@ -98,118 +91,90 @@ export async function POST(request: Request) {
       );
     }
 
-    // Build content array with text prompt + images
-    const content: Array<
-      { type: "text"; text: string } | { type: "image"; image: string }
-    > = [
-      { type: "text", text: STATION_USER_PROMPT },
-      { type: "text", text: "Image A (SIGN):" },
-      { type: "image", image: signBlobUrl },
-      { type: "text", text: "Image B (STOCK):" },
-      { type: "image", image: stockBlobUrl },
-    ];
+    // Run both extractions in parallel
+    const { combined, sign, stock } = await extractStationDetailed(
+      signBlobUrl,
+      stockBlobUrl,
+      selectedSignModel,
+      selectedStockModel
+    );
 
-    // Stream the object generation
-    const result = streamObject({
-      model: selectedModel,
-      schema: StationExtractionSchema,
-      schemaName: "StationExtraction",
-      schemaDescription:
-        "Extracted station data from sign and stock images with match validation",
-      messages: [
-        { role: "system", content: STATION_SYSTEM_PROMPT },
-        { role: "user", content },
-      ],
-    });
+    // Map extraction status to station status
+    const newStatus = mapExtractionStatusToStationStatus(combined);
 
-    // Create a custom streaming response that:
-    // 1. Streams chunks to client in real-time
-    // 2. Accumulates the full JSON string
-    // 3. Persists to database BEFORE the response ends (critical for serverless)
-    const encoder = new TextEncoder();
+    // Calculate approximate cost (we don't have exact token counts from parallel calls)
+    // This is a rough estimate based on typical image + text tokens
+    const estimatedInputTokens = 2000; // ~1000 per image
+    const estimatedOutputTokens = 200; // ~100 per extraction
+    const signCost = calculateCost(selectedSignModel, estimatedInputTokens / 2, estimatedOutputTokens / 2);
+    const stockCost = calculateCost(selectedStockModel, estimatedInputTokens / 2, estimatedOutputTokens / 2);
+    const totalCost = signCost + stockCost;
 
-    const stream = new ReadableStream({
-      async start(controller) {
-        let accumulatedJson = "";
+    // Update station with extraction results and metadata
+    // Also persist blob URLs if they were provided (ensures URLs are saved even if webhook is slow)
+    const now = new Date().toISOString();
+    await db
+      .update(stationCaptures)
+      .set({
+        status: newStatus,
+        productCode: combined.productCode,
+        minQty: combined.minQty,
+        maxQty: combined.maxQty,
+        onHandQty: combined.onHandQty,
+        errorMessage: combined.status !== "success" ? combined.message : null,
+        // Store both models used (sign model in 'model' field for backward compatibility)
+        model: `${selectedSignModel} + ${selectedStockModel}`,
+        // Estimated tokens (we don't have exact counts from parallel calls)
+        inputTokens: estimatedInputTokens,
+        outputTokens: estimatedOutputTokens,
+        totalCost,
+        extractedAt: now,
+        // Persist blob URLs if provided (handles race condition with webhook)
+        ...(providedSignUrl ? { signBlobUrl: providedSignUrl, signUploadedAt: now } : {}),
+        ...(providedStockUrl ? { stockBlobUrl: providedStockUrl, stockUploadedAt: now } : {}),
+      })
+      .where(eq(stationCaptures.id, stationId));
 
-        try {
-          // Iterate through textStream - this gives us raw JSON string chunks
-          for await (const chunk of result.textStream) {
-            accumulatedJson += chunk;
-            // Stream chunk to client immediately
-            controller.enqueue(encoder.encode(chunk));
-          }
+    console.log(
+      `Station extraction persisted for station ${stationId} (sign: ${sign.status}, stock: ${stock.status}, combined: ${combined.status})`
+    );
 
-          // Stream finished - now persist to database BEFORE closing
-          const extraction = safeParseExtraction(accumulatedJson);
-
-          if (extraction) {
-            // Get usage stats
-            const usage = await result.usage;
-            const inputTokens = usage?.inputTokens;
-            const outputTokens = usage?.outputTokens;
-            const totalCost =
-              inputTokens !== undefined && outputTokens !== undefined
-                ? calculateCost(selectedModel, inputTokens, outputTokens)
-                : undefined;
-
-            // Map extraction status to station status
-            const newStatus = mapExtractionStatusToStationStatus(extraction);
-
-            // Update station with extraction results and metadata
-            await db
-              .update(stationCaptures)
-              .set({
-                status: newStatus,
-                productCode: extraction.productCode,
-                minQty: extraction.minQty,
-                maxQty: extraction.maxQty,
-                onHandQty: extraction.onHandQty,
-                errorMessage:
-                  extraction.status !== "success" ? extraction.message : null,
-                model: selectedModel,
-                inputTokens,
-                outputTokens,
-                totalCost,
-                extractedAt: new Date().toISOString(),
-              })
-              .where(eq(stationCaptures.id, stationId));
-
-            console.log(
-              `Station extraction persisted for station ${stationId}`,
-            );
-          } else {
-            // Parsing failed - mark as needs attention
-            console.error(
-              `Failed to parse station extraction for ${stationId}. Raw length: ${accumulatedJson.length}`,
-            );
-            await db
-              .update(stationCaptures)
-              .set({ status: "needs_attention" })
-              .where(eq(stationCaptures.id, stationId));
-          }
-
-          controller.close();
-        } catch (error) {
-          console.error(`Stream error for station ${stationId}:`, error);
-          // Still try to update status on error
-          await db
-            .update(stationCaptures)
-            .set({ status: "needs_attention" })
-            .where(eq(stationCaptures.id, stationId));
-          controller.error(error);
-        }
-      },
-    });
-
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "text/plain; charset=utf-8",
-        "Transfer-Encoding": "chunked",
+    // Return the combined extraction result as JSON
+    // Include detailed results for debugging/transparency
+    return Response.json({
+      extraction: combined,
+      details: {
+        sign: {
+          status: sign.status,
+          message: sign.message,
+          productCode: sign.productCode,
+          minQty: sign.minQty,
+          maxQty: sign.maxQty,
+          model: selectedSignModel,
+        },
+        stock: {
+          status: stock.status,
+          message: stock.message,
+          onHandQty: stock.onHandQty,
+          confidence: stock.confidence,
+          countingMethod: stock.countingMethod,
+          model: selectedStockModel,
+        },
       },
     });
   } catch (error) {
     console.error("Failed to extract station:", error);
+
+    // Update station status on error
+    try {
+      await db
+        .update(stationCaptures)
+        .set({ status: "needs_attention", errorMessage: "Extraction failed" })
+        .where(eq(stationCaptures.id, stationId));
+    } catch {
+      // Ignore DB error
+    }
+
     return Response.json({ error: "Failed to extract station" }, { status: 500 });
   }
 }
